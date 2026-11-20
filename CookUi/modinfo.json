@@ -2,13 +2,16 @@
     "$schema": "https://moddbcdn.vintagestory.at/schema/modinfo.latest.json",
     "type": "Code",
     "modid": "cookui",
-    "name": "CookUi",
+    "name": "Cook UI",
     "authors": [
         "Unknown"
     ],
-    "description": "To be added",
+    "description": "Shows which cooking pot recipes your current ingredients can make, and what is still missing.",
     "version": "1.0.0",
     "dependencies": {
         "game": "1.22.0"
-    }
+    },
+    "side": "Client",
+    "requiredOnClient": false,
+    "requiredOnServer": false
 }
