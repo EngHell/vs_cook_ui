@@ -1,3 +1,25 @@
 {
-    "hello": "hello world!"
+    "panel-title": "Pot recipes",
+    "servings": "{0} servings",
+    "too-much": "Too much: {0} servings won't fit in this pot",
+    "ratio-wrong": "Uneven amounts: use the same stack size in every slot",
+    "needs-more": "Needs {0} more ingredient(s)",
+    "slot-needed": "Needed: {0}",
+    "slot-optional": "Optional: {0}",
+    "sat-each": "{0} sat. per serving",
+    "sat-ready": "{0} sat. per serving, {1} total",
+    "sat-per-serving": "{0} sat. per serving",
+    "sat-so-far": "So far: {0} sat. per serving",
+    "sat-finished": "When finished: {0} sat. per serving",
+    "sat-extras": "Optional extras: up to +{0} sat.",
+    "more": "...and {0} more",
+    "no-recipes": "No known recipes for this pot",
+    "no-recipe-fits": "No recipe matches these ingredients",
+
+    "recipe-meatystew": "Meat stew",
+    "recipe-vegetablestew": "Vegetable stew",
+    "recipe-soup": "Soup",
+    "recipe-porridge": "Porridge",
+    "recipe-scrambledeggs": "Scrambled eggs",
+    "recipe-jam": "Jam"
 }
