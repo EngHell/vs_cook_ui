@@ -247,22 +247,8 @@ public class GuiCookingPreview : HudElement
             }
         }
 
-        // 3. Optional room, round-robin over groups so different kinds show up first.
-        var room = ingredients.Select((ing, j) => ing.MaxQuantity - Math.Max(ing.MinQuantity, counts[j])).ToArray();
-        bool added = true;
-        while (slots.Count < slotCount && added)
-        {
-            added = false;
-            for (int j = 0; j < ingredients.Length && slots.Count < slotCount; j++)
-            {
-                if (room[j] <= 0) continue;
-                room[j]--;
-                var range = icons!.SatietyRange(ingredients[j], entity);
-                if (range != null) nutrition.AddOptional(range.Value.max);
-                slots.Add(Ghost(SlotKind.Optional, ingredients[j], servings, range));
-                added = true;
-            }
-        }
+        // 3. Optional room.
+        AddOptionalSlots(ingredients, counts, slots, slotCount, servings, entity, nutrition);
 
         while (slots.Count < slotCount) slots.Add(new SlotView { Kind = SlotKind.Empty });
 
@@ -273,6 +259,92 @@ public class GuiCookingPreview : HudElement
             Ingredients = slots,
         };
     }
+
+    /// <summary>A set of ingredient groups that accept the same items (egg-base + egg-extra...).</summary>
+    private sealed class OptionalKind
+    {
+        public required CookingRecipeIngredient Ingredient;
+        public int Room;
+        public (float min, float max)? Satiety;
+    }
+
+    /// <summary>
+    /// Fills the free pot slots with optional ingredients. Groups accepting the same items are
+    /// merged into one kind. If every kind gets its own slot, each slot shows one kind; otherwise
+    /// every free slot is a "any of these" slot drawing a small mosaic of all the kinds.
+    /// </summary>
+    private void AddOptionalSlots(CookingRecipeIngredient[] ingredients, int[] counts, List<SlotView> slots,
+        int slotCount, int? servings, EntityAgent? entity, MealNutritionSummary nutrition)
+    {
+        var kinds = new List<OptionalKind>();
+        var byKey = new Dictionary<string, OptionalKind>();
+        for (int j = 0; j < ingredients.Length; j++)
+        {
+            var ing = ingredients[j];
+            int room = ing.MaxQuantity - Math.Max(ing.MinQuantity, counts[j]);
+            if (room <= 0) continue;
+            string key = KindKey(ing);
+            if (!byKey.TryGetValue(key, out var kind))
+            {
+                kind = new OptionalKind { Ingredient = ing, Satiety = icons!.SatietyRange(ing, entity) };
+                byKey[key] = kind;
+                kinds.Add(kind);
+            }
+            kind.Room += room;
+        }
+
+        int free = slotCount - slots.Count;
+        if (free <= 0 || kinds.Count == 0) return;
+
+        // Best extra satiety: the most nutritious items that fit in the free slots.
+        float extra = kinds
+            .SelectMany(k => Enumerable.Repeat(k.Satiety?.max ?? 0f, k.Room))
+            .OrderByDescending(v => v).Take(free).Sum();
+        if (extra > 0) nutrition.AddOptional(extra);
+
+        int optSlots = Math.Min(free, kinds.Sum(k => k.Room));
+        if (kinds.Count <= optSlots)
+        {
+            // Room for one of each: round-robin so different kinds show up first.
+            var left = kinds.Select(k => k.Room).ToArray();
+            bool added = true;
+            while (slots.Count < slotCount && added)
+            {
+                added = false;
+                for (int i = 0; i < kinds.Count && slots.Count < slotCount; i++)
+                {
+                    if (left[i] <= 0) continue;
+                    left[i]--;
+                    slots.Add(Ghost(SlotKind.Optional, kinds[i].Ingredient, servings, kinds[i].Satiety));
+                    added = true;
+                }
+            }
+            return;
+        }
+
+        // More kinds than free slots: each free slot accepts any of them.
+        // No corner amount on these slots (it would cover the "+N" cell): each line carries its own.
+        var choices = kinds.Select(k => Ghost(SlotKind.Optional, k.Ingredient, servings, k.Satiety)).ToList();
+        var tooltip = new StringBuilder(Lang.Get("cookui:slot-optional-any"));
+        for (int i = 0; i < kinds.Count; i++)
+        {
+            var k = kinds[i];
+            string label = icons!.Get(k.Ingredient).Label;
+            if (choices[i].Count != null) label += " (" + choices[i].Count + ")";
+            tooltip.Append('\n').Append(k.Satiety is { } s
+                ? Lang.Get("cookui:slot-choice-sat", label, k.Room, Range(s.min, s.max))
+                : Lang.Get("cookui:slot-choice", label, k.Room));
+        }
+        string text = tooltip.ToString();
+        for (int i = 0; i < optSlots; i++)
+        {
+            slots.Add(new SlotView { Kind = SlotKind.Optional, Choices = choices, Tooltip = text });
+        }
+    }
+
+    private string KindKey(CookingRecipeIngredient ing) =>
+        string.Join(",", icons!.Stacks(ing).Select(s => s.Collectible.Code.ToString()).OrderBy(c => c, StringComparer.Ordinal))
+        + "|" + ing.PortionSizeLitres.ToString(CultureInfo.InvariantCulture);
 
     private SlotView Ghost(SlotKind kind, CookingRecipeIngredient ing, int? servings, (float min, float max)? satiety)
     {
