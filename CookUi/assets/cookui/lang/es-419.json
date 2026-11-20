@@ -1,0 +1,25 @@
+{
+    "panel-title": "Recetas de la olla",
+    "servings": "{0} porciones",
+    "too-much": "Demasiado: {0} porciones no caben en esta olla",
+    "ratio-wrong": "Cantidades desiguales: usa la misma cantidad en cada espacio",
+    "needs-more": "Faltan {0} ingrediente(s)",
+    "slot-needed": "Necesario: {0}",
+    "slot-optional": "Opcional: {0}",
+    "sat-each": "{0} sat. por porción",
+    "sat-ready": "{0} sat. por porción, {1} en total",
+    "sat-per-serving": "{0} sat. por porción",
+    "sat-so-far": "Hasta ahora: {0} sat. por porción",
+    "sat-finished": "Al completarla: {0} sat. por porción",
+    "sat-extras": "Extras opcionales: hasta +{0} sat.",
+    "more": "...y {0} más",
+    "no-recipes": "No hay recetas conocidas para esta olla",
+    "no-recipe-fits": "Ninguna receta coincide con estos ingredientes",
+
+    "recipe-meatystew": "Estofado de carne",
+    "recipe-vegetablestew": "Estofado de verduras",
+    "recipe-soup": "Sopa",
+    "recipe-porridge": "Papilla",
+    "recipe-scrambledeggs": "Huevos revueltos",
+    "recipe-jam": "Mermelada"
+}
