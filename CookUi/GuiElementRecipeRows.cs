@@ -19,6 +19,11 @@ public sealed class SlotView
     public string? Count;
     /// <summary>Amount is wrong (uneven stack size); count is drawn in orange.</summary>
     public bool Warn;
+    /// <summary>
+    /// The slot accepts any of these (one per ingredient kind); drawn as a 2×2 mosaic of small
+    /// icons instead of <see cref="Slot"/>, with "+N" in the last cell when there are more than 4.
+    /// </summary>
+    public List<SlotView>? Choices;
 }
 
 public sealed class RowView
@@ -171,7 +176,11 @@ public class GuiElementRecipeRows : GuiElement
     /// <returns>The slot's tooltip when the mouse is over it.</returns>
     private string? RenderSlot(SlotView view, double x, double y, double size, int mx, int my)
     {
-        if (view.Slot?.Itemstack != null)
+        if (view.Choices is { Count: > 0 } choices)
+        {
+            RenderMosaic(view, choices, x, y, size);
+        }
+        else if (view.Slot?.Itemstack != null)
         {
             int color = view.Kind switch
             {
@@ -196,6 +205,29 @@ public class GuiElementRecipeRows : GuiElement
 
         bool inside = mx >= x && mx < x + size && my >= y && my < y + size;
         return inside ? view.Tooltip : null;
+    }
+
+    /// <summary>Up to four small icons in a 2×2 grid; with more choices the last cell says "+N".</summary>
+    private void RenderMosaic(SlotView view, List<SlotView> choices, double x, double y, double size)
+    {
+        int color = view.Kind == SlotKind.Required ? RequiredColor : OptionalColor;
+        bool overflow = choices.Count > 4;
+        int icons = overflow ? 3 : choices.Count;
+        double cell = size / 2;
+        for (int i = 0; i < icons; i++)
+        {
+            var slot = choices[i].Slot;
+            if (slot?.Itemstack == null) continue;
+            double cx = x + (i % 2) * cell + cell / 2;
+            double cy = y + (i / 2) * cell + cell / 2;
+            api.Render.RenderItemstackToGui(slot, cx, cy, 100, (float)(cell * 0.62), color, true, false, false);
+        }
+        if (overflow)
+        {
+            var tex = Text("+" + (choices.Count - 3), new[] { 0.8, 0.8, 0.8, 1.0 });
+            api.Render.Render2DTexturePremultipliedAlpha(tex.TextureId,
+                x + cell + (cell - tex.Width) / 2, y + cell + (cell - tex.Height) / 2, tex.Width, tex.Height, 200);
+        }
     }
 
     private LoadedTexture Text(string text, double[] color)
