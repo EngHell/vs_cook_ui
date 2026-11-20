@@ -151,8 +151,13 @@ public class GuiElementRecipeRows : GuiElement
         }
     }
 
-    // Drawn after the scroll clip is released, so the popup isn't cut off.
-    public override void PostRenderInteractiveElements(float deltaTime)
+    /// <summary>
+    /// Draws the hovered slot's tooltip. Call during the GUI pass but after the composer has
+    /// rendered (scroll clip already released), e.g. from the dialog's OnRenderGUI after base.
+    /// Not from PostRenderInteractiveElements: that runs in OnFinalizeFrame, where the GUI
+    /// shader isn't bound and 2D drawing crashes.
+    /// </summary>
+    public void RenderTooltip()
     {
         tooltip.Render(hover, api.Input.MouseX, api.Input.MouseY);
     }

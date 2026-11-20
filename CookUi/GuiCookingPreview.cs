@@ -449,6 +449,8 @@ public class GuiCookingPreview : HudElement
         if (target == null || !target.IsOpened()) return;
         Reposition();
         base.OnRenderGUI(deltaTime);
+        // After base: the EndClip element has popped the scissor, so the tooltip isn't cut off.
+        (SingleComposer?.GetElement("rows") as GuiElementRecipeRows)?.RenderTooltip();
     }
 }
 
