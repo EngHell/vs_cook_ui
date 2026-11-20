@@ -12,7 +12,10 @@
     "sat-so-far": "So far: {0} sat. per serving",
     "sat-finished": "When finished: {0} sat. per serving",
     "sat-extras": "Optional extras: up to +{0} sat.",
-    "more": "...and {0} more",
+    "btn-show": "Show pot recipes",
+    "btn-hide": "Hide pot recipes",
+    "btn-auto-on": "Auto-open: on\n(click to turn off)",
+    "btn-auto-off": "Auto-open: off\n(click to turn on)",
     "no-recipes": "No known recipes for this pot",
     "no-recipe-fits": "No recipe matches these ingredients",
 

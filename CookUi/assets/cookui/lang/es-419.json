@@ -12,7 +12,10 @@
     "sat-so-far": "Hasta ahora: {0} sat. por porción",
     "sat-finished": "Al completarla: {0} sat. por porción",
     "sat-extras": "Extras opcionales: hasta +{0} sat.",
-    "more": "...y {0} más",
+    "btn-show": "Mostrar recetas de la olla",
+    "btn-hide": "Ocultar recetas de la olla",
+    "btn-auto-on": "Abrir automáticamente: sí\n(clic para desactivar)",
+    "btn-auto-off": "Abrir automáticamente: no\n(clic para activar)",
     "no-recipes": "No hay recetas conocidas para esta olla",
     "no-recipe-fits": "Ninguna receta coincide con estos ingredientes",
 

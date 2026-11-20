@@ -18,28 +18,51 @@ namespace CookUi;
 public class GuiCookingPreview : HudElement
 {
     private const double GapPx = 6;
-    private const int MaxListed = 8;
+    private const int MaxVisibleRows = 6;
+    private const double ScrollbarWidth = 20;
+    private const double ScrollbarGap = 6;
 
     private GuiDialogBlockEntityFirepit? target;
     private string lastSignature = "";
     private IngredientIcons? icons;
+    private readonly CookUiConfig config;
+    /// <summary>Firepit dialog the current show/hide choice belongs to; reset each time a firepit opens.</summary>
+    private GuiDialogBlockEntityFirepit? sessionDlg;
+    /// <summary>Whether the player wants the panel shown for this firepit (starts as the auto-open setting).</summary>
+    private bool panelWanted;
+    private ElementBounds? rowsBounds;
 
-    public GuiCookingPreview(ICoreClientAPI capi) : base(capi) { }
+    public GuiCookingPreview(ICoreClientAPI capi, CookUiConfig config) : base(capi)
+    {
+        this.config = config;
+    }
 
     public override bool Focusable => false;
     public override double DrawOrder => 0.21; // just above the firepit dialog (0.2)
-    public override bool ShouldReceiveMouseEvents() => false;
+    // Mouse events stay on (default) so the title bar buttons work and clicks on the
+    // panel don't fall through to the world.
     public override bool ShouldReceiveKeyboardEvents() => false;
 
     /// <summary>Called periodically by the mod system; shows, refreshes or hides the panel.</summary>
     public void Update()
     {
         var dlg = capi.Gui.OpenedGuis.OfType<GuiDialogBlockEntityFirepit>().FirstOrDefault();
-        var inv = dlg?.Inventory as InventorySmelting;
-
-        if (dlg == null || inv == null || !inv.HaveCookingContainer || inv[1].Itemstack?.Collectible is not BlockCookingContainer)
+        if (dlg != sessionDlg)
         {
-            target = null;
+            sessionDlg = dlg;
+            panelWanted = config.AutoOpen;
+        }
+
+        if (dlg != null)
+        {
+            GuiElementFirepitButtons.AttachTo(capi, dlg, () => new GuiElementFirepitButtons(
+                capi, dlg, () => HasPot(dlg), IsOpened, () => config.AutoOpen, TogglePanel, ToggleAutoOpen));
+        }
+
+        var inv = dlg?.Inventory as InventorySmelting;
+        if (dlg == null || inv == null || !HasPot(dlg) || !panelWanted)
+        {
+            target = dlg;
             lastSignature = "";
             if (IsOpened()) TryClose();
             return;
@@ -54,6 +77,28 @@ public class GuiCookingPreview : HudElement
         }
 
         if (!IsOpened()) TryOpen();
+    }
+
+    private static bool HasPot(GuiDialogBlockEntityFirepit dlg) =>
+        dlg.Inventory is InventorySmelting inv && inv.HaveCookingContainer && inv[1].Itemstack?.Collectible is BlockCookingContainer;
+
+    private void TogglePanel()
+    {
+        panelWanted = !panelWanted;
+        Update();
+    }
+
+    private void ToggleAutoOpen()
+    {
+        config.AutoOpen = !config.AutoOpen;
+        config.Save(capi);
+    }
+
+    // Only scroll when the mouse is over the panel, so the wheel still works elsewhere.
+    public override void OnMouseWheel(MouseWheelEventArgs args)
+    {
+        if (SingleComposer?.Bounds.PointInside(capi.Input.MouseX, capi.Input.MouseY) != true) return;
+        base.OnMouseWheel(args);
     }
 
     private static string Signature(InventorySmelting inv)
@@ -81,18 +126,23 @@ public class GuiCookingPreview : HudElement
         var recipes = capi.GetCookingRecipes() ?? new List<CookingRecipe>();
         var predictions = RecipePredictor.Predict(recipes, stacks, slotCount, pot.MaxServingSize, dirty);
 
-        var rows = predictions.Take(MaxListed)
+        var rows = predictions
             .Select(p => BuildRow(p, stacks, slotCount, pot.MaxServingSize))
             .ToList();
 
-        double width = GuiElementRecipeRows.WidthFor(slotCount);
-        double height = GuiElementRecipeRows.HeightFor(rows.Count);
+        double rowsWidth = GuiElementRecipeRows.WidthFor(slotCount);
+        double totalHeight = GuiElementRecipeRows.HeightFor(rows.Count);
+        double visibleHeight = GuiElementRecipeRows.HeightFor(Math.Min(rows.Count, MaxVisibleRows));
+        bool scroll = rows.Count > MaxVisibleRows;
+        double width = rowsWidth + (scroll ? ScrollbarGap + ScrollbarWidth : 0);
 
         var bgBounds = ElementBounds.Fill.WithFixedPadding(GuiStyle.ElementToDialogPadding);
         bgBounds.BothSizing = ElementSizing.FitToChildren;
 
-        var rowsBounds = ElementBounds.Fixed(0, 30, width, height);
-        bgBounds.WithChildren(rowsBounds);
+        var clipBounds = ElementBounds.Fixed(0, 30, rowsWidth, visibleHeight);
+        rowsBounds = ElementBounds.Fixed(0, 0, rowsWidth, totalHeight);
+        var scrollBounds = ElementBounds.Fixed(rowsWidth + ScrollbarGap, 30, ScrollbarWidth, visibleHeight);
+        bgBounds.WithChildren(clipBounds, scrollBounds);
 
         var dialogBounds = ElementBounds.Fixed(EnumDialogArea.None, 0, 0, width, 100);
         dialogBounds.BothSizing = ElementSizing.FitToChildren;
@@ -100,26 +150,45 @@ public class GuiCookingPreview : HudElement
         SingleComposer?.Dispose();
         var composer = capi.Gui.CreateCompo("cookui-preview", dialogBounds)
             .AddShadedDialogBG(bgBounds, true)
-            .AddDialogTitleBarWithBg(Lang.Get("cookui:panel-title"), () => { }, CairoFont.WhiteSmallText())
+            .AddDialogTitleBarWithBg(Lang.Get("cookui:panel-title"), OnCloseClicked, CairoFont.WhiteSmallText(), null, "titlebar")
             .BeginChildElements(bgBounds);
 
         if (rows.Count > 0)
         {
-            composer.AddInteractiveElement(new GuiElementRecipeRows(capi, rowsBounds, rows, slotCount), "rows");
+            composer
+                .BeginClip(clipBounds)
+                    .AddInteractiveElement(new GuiElementRecipeRows(capi, rowsBounds, clipBounds, rows, slotCount), "rows")
+                .EndClip();
+            if (scroll) composer.AddVerticalScrollbar(OnScroll, scrollBounds, "scrollbar");
         }
-
-        string? note = rows.Count == 0
-            ? Lang.Get(stacks.Length == 0 ? "cookui:no-recipes" : "cookui:no-recipe-fits")
-            : predictions.Count > MaxListed ? Lang.Get("cookui:more", predictions.Count - MaxListed) : null;
-        if (note != null)
+        else
         {
-            var noteBounds = ElementBounds.Fixed(0, 30 + height + (rows.Count > 0 ? 6 : 0), width, 20);
+            var noteBounds = ElementBounds.Fixed(0, 30, rowsWidth, 20);
             bgBounds.WithChildren(noteBounds);
+            string note = Lang.Get(stacks.Length == 0 ? "cookui:no-recipes" : "cookui:no-recipe-fits");
             composer.AddStaticText(note, CairoFont.WhiteDetailText().WithColor(new[] { 0.7, 0.7, 0.7, 1.0 }), noteBounds);
         }
 
         SingleComposer = composer.EndChildElements().Compose();
+        if (scroll)
+        {
+            SingleComposer.GetScrollbar("scrollbar").SetHeights((float)visibleHeight, (float)totalHeight);
+        }
         Reposition();
+    }
+
+    private void OnScroll(float value)
+    {
+        if (rowsBounds == null) return;
+        rowsBounds.fixedY = -value;
+        rowsBounds.CalcWorldBounds();
+    }
+
+    private void OnCloseClicked()
+    {
+        panelWanted = false;
+        lastSignature = "";
+        TryClose();
     }
 
     private RowView BuildRow(RecipePrediction p, ItemStack[] stacks, int slotCount, int maxServings)
@@ -342,12 +411,16 @@ public class GuiCookingPreview : HudElement
 
     private static string Litres(float l) => l.ToString("0.##", CultureInfo.CurrentCulture) + "L";
 
-    /// <summary>Keep the panel glued to the firepit dialog, which can float with the block.</summary>
+    /// <summary>
+    /// Keep the panel glued to the firepit dialog, which can float with the block, unless the
+    /// player switched it to "Movable" in the title bar menu (the game then saves its position).
+    /// </summary>
     private void Reposition()
     {
         var host = target?.SingleComposer?.Bounds;
         var own = SingleComposer?.Bounds;
         if (host == null || own == null) return;
+        if (SingleComposer!.GetTitleBar("titlebar")?.Movable == true) return;
 
         double x = host.absX + host.OuterWidth + GapPx;
         if (x + own.OuterWidth > capi.Render.FrameWidth)
@@ -356,15 +429,18 @@ public class GuiCookingPreview : HudElement
         }
         double y = host.absY;
 
-        if (own.absX == x && own.absY == y) return;
+        if (Math.Abs(own.absX - x) < 0.5 && Math.Abs(own.absY - y) < 0.5) return;
 
         own.Alignment = EnumDialogArea.None;
         own.fixedOffsetX = 0;
         own.fixedOffsetY = 0;
         own.absMarginX = 0;
         own.absMarginY = 0;
-        own.absFixedX = x;
-        own.absFixedY = y;
+        own.absFixedX = 0;
+        own.absFixedY = 0;
+        // Use fixedX/Y (unscaled) like the title bar's drag code does, so switching to Movable starts here.
+        own.fixedX = x / RuntimeEnv.GUIScale;
+        own.fixedY = y / RuntimeEnv.GUIScale;
         own.CalcWorldBounds();
     }
 

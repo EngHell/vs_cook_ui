@@ -46,15 +46,20 @@ public class GuiElementRecipeRows : GuiElement
 
     private readonly List<RowView> rows;
     private readonly int slotCount;
+    private readonly ElementBounds clipBounds;
     private readonly Dictionary<string, LoadedTexture> textCache = new();
-    private LoadedTexture? tooltipTex;
-    private string? tooltipText;
+    private readonly TooltipRenderer tooltip;
+    private LoadedTexture? slotTex, readyTex, warnTex, sepTex;
+    private string? hover;
 
-    public GuiElementRecipeRows(ICoreClientAPI capi, ElementBounds bounds, List<RowView> rows, int slotCount)
+    /// <param name="clipBounds">Visible (scrolled) area; slots outside it don't react to the mouse.</param>
+    public GuiElementRecipeRows(ICoreClientAPI capi, ElementBounds bounds, ElementBounds clipBounds, List<RowView> rows, int slotCount)
         : base(capi, bounds)
     {
         this.rows = rows;
         this.slotCount = slotCount;
+        this.clipBounds = clipBounds;
+        tooltip = new TooltipRenderer(capi);
     }
 
     public static double WidthFor(int slotCount) => SlotSize + SeparatorGap + slotCount * (SlotSize + SlotGap) - SlotGap;
@@ -64,77 +69,98 @@ public class GuiElementRecipeRows : GuiElement
     private static double SlotX(int index) => index < 0 ? 0 : SlotSize + SeparatorGap + index * (SlotSize + SlotGap);
     private static double RowY(int row) => row * (SlotSize + RowGap);
 
+    // Backgrounds are textures drawn every frame (not the composer's static layer) so they scroll with the rows.
     public override void ComposeElements(Context ctx, ImageSurface surface)
     {
         Bounds.CalcWorldBounds();
-        double size = scaled(SlotSize);
+        int size = (int)scaled(SlotSize);
+        slotTex = SlotTexture(size, null);
+        readyTex = SlotTexture(size, new[] { 0.5, 0.82, 0.5, 0.9 });
+        warnTex = SlotTexture(size, new[] { 0.88, 0.63, 0.31, 0.9 });
 
-        for (int r = 0; r < rows.Count; r++)
+        int w = Math.Max(2, (int)scaled(1.5));
+        using var sepSurface = new ImageSurface(Format.Argb32, w, size);
+        using (var sctx = genContext(sepSurface))
         {
-            var row = rows[r];
-            double y = Bounds.drawY + scaled(RowY(r));
-
-            DrawSlotBg(ctx, Bounds.drawX + scaled(SlotX(-1)), y, size, row.State);
-
-            // Separator between meal and ingredients.
-            double sx = Bounds.drawX + scaled(SlotSize + SeparatorGap / 2);
-            ctx.SetSourceRGBA(1, 1, 1, 0.25);
-            ctx.LineWidth = scaled(1.5);
-            ctx.MoveTo(sx, y + scaled(6));
-            ctx.LineTo(sx, y + size - scaled(6));
-            ctx.Stroke();
-
-            for (int i = 0; i < slotCount; i++)
-            {
-                DrawSlotBg(ctx, Bounds.drawX + scaled(SlotX(i)), y, size, null);
-            }
+            sctx.SetSourceRGBA(1, 1, 1, 0.25);
+            sctx.Rectangle(0, scaled(6), w, size - scaled(12));
+            sctx.Fill();
         }
+        sepTex = new LoadedTexture(api);
+        generateTexture(sepSurface, ref sepTex);
     }
 
-    private void DrawSlotBg(Context ctx, double x, double y, double size, PredictionState? state)
+    private LoadedTexture SlotTexture(int size, double[]? border)
     {
-        ctx.SetSourceRGBA(GuiStyle.DialogSlotBackColor);
-        RoundRectangle(ctx, x, y, size, size, GuiStyle.ElementBGRadius);
-        ctx.Fill();
-        EmbossRoundRectangleElement(ctx, x, y, size, size, true, 2, 2);
-
-        double[]? border = state switch
+        using var surface = new ImageSurface(Format.Argb32, size, size);
+        using (var ctx = genContext(surface))
         {
-            PredictionState.Ready => new[] { 0.5, 0.82, 0.5, 0.9 },
-            PredictionState.TooMuch or PredictionState.RatioWrong => new[] { 0.88, 0.63, 0.31, 0.9 },
-            _ => null,
-        };
-        if (border != null)
-        {
-            ctx.SetSourceRGBA(border);
-            ctx.LineWidth = scaled(2);
-            RoundRectangle(ctx, x + scaled(1), y + scaled(1), size - scaled(2), size - scaled(2), GuiStyle.ElementBGRadius);
-            ctx.Stroke();
+            ctx.SetSourceRGBA(GuiStyle.DialogSlotBackColor);
+            RoundRectangle(ctx, 0, 0, size, size, GuiStyle.ElementBGRadius);
+            ctx.Fill();
+            EmbossRoundRectangleElement(ctx, 0, 0, size, size, true, 2, 2);
+            if (border != null)
+            {
+                ctx.SetSourceRGBA(border);
+                ctx.LineWidth = scaled(2);
+                RoundRectangle(ctx, scaled(1), scaled(1), size - scaled(2), size - scaled(2), GuiStyle.ElementBGRadius);
+                ctx.Stroke();
+            }
         }
+        var tex = new LoadedTexture(api);
+        generateTexture(surface, ref tex);
+        return tex;
     }
 
     public override void RenderInteractiveElements(float deltaTime)
     {
         double size = scaled(SlotSize);
         int mx = api.Input.MouseX, my = api.Input.MouseY;
-        string? hover = null;
+        bool mouseInView = clipBounds.PointInside(mx, my);
+        hover = null;
 
         for (int r = 0; r < rows.Count; r++)
         {
             var row = rows[r];
             double y = Bounds.renderY + scaled(RowY(r));
+            // Skip rows scrolled fully out of view.
+            if (y + size < clipBounds.renderY || y > clipBounds.renderY + clipBounds.InnerHeight) continue;
+
+            var bg = row.State switch
+            {
+                PredictionState.Ready => readyTex,
+                PredictionState.TooMuch or PredictionState.RatioWrong => warnTex,
+                _ => slotTex,
+            };
+            double mealX = Bounds.renderX + scaled(SlotX(-1));
+            Blit(bg, mealX, y);
+            if (sepTex != null) Blit(sepTex, Bounds.renderX + scaled(SlotSize + SeparatorGap / 2) - sepTex.Width / 2.0, y);
+
             // Always render every slot; only remember the first tooltip under the mouse.
             // (Don't use `hover ??= RenderSlot(...)`: it skips rendering once hover is set.)
-            var t = RenderSlot(row.Meal, Bounds.renderX + scaled(SlotX(-1)), y, size, mx, my);
-            hover ??= t;
-            for (int i = 0; i < row.Ingredients.Count && i < slotCount; i++)
+            var t = RenderSlot(row.Meal, mealX, y, size, mx, my);
+            if (mouseInView) hover ??= t;
+            for (int i = 0; i < slotCount; i++)
             {
-                t = RenderSlot(row.Ingredients[i], Bounds.renderX + scaled(SlotX(i)), y, size, mx, my);
-                hover ??= t;
+                double x = Bounds.renderX + scaled(SlotX(i));
+                Blit(slotTex, x, y);
+                if (i >= row.Ingredients.Count) continue;
+                t = RenderSlot(row.Ingredients[i], x, y, size, mx, my);
+                if (mouseInView) hover ??= t;
             }
         }
+    }
 
-        RenderTooltip(hover, mx, my);
+    // Drawn after the scroll clip is released, so the popup isn't cut off.
+    public override void PostRenderInteractiveElements(float deltaTime)
+    {
+        tooltip.Render(hover, api.Input.MouseX, api.Input.MouseY);
+    }
+
+    private void Blit(LoadedTexture? tex, double x, double y)
+    {
+        if (tex == null) return;
+        api.Render.Render2DTexturePremultipliedAlpha(tex.TextureId, x, y, tex.Width, tex.Height, 50);
     }
 
     /// <returns>The slot's tooltip when the mouse is over it.</returns>
@@ -179,37 +205,15 @@ public class GuiElementRecipeRows : GuiElement
         return tex;
     }
 
-    private void RenderTooltip(string? text, int mx, int my)
-    {
-        if (string.IsNullOrEmpty(text)) return;
-        if (text != tooltipText)
-        {
-            tooltipTex?.Dispose();
-            tooltipText = text;
-            var bg = new TextBackground
-            {
-                FillColor = GuiStyle.DialogStrongBgColor,
-                BorderColor = GuiStyle.DialogBorderColor,
-                BorderWidth = 2,
-                Padding = 6,
-                Radius = 3,
-            };
-            tooltipTex = api.Gui.TextTexture.GenTextTexture(text, CairoFont.WhiteSmallText(), (int)scaled(260), bg);
-        }
-        if (tooltipTex == null) return;
-
-        double x = mx + scaled(14), y = my + scaled(14);
-        if (x + tooltipTex.Width > api.Render.FrameWidth) x = mx - tooltipTex.Width - scaled(6);
-        if (y + tooltipTex.Height > api.Render.FrameHeight) y = my - tooltipTex.Height - scaled(6);
-        api.Render.Render2DTexturePremultipliedAlpha(tooltipTex.TextureId, x, y, tooltipTex.Width, tooltipTex.Height, 500);
-    }
-
     public override void Dispose()
     {
         base.Dispose();
         foreach (var t in textCache.Values) t.Dispose();
         textCache.Clear();
-        tooltipTex?.Dispose();
-        tooltipTex = null;
+        tooltip.Dispose();
+        slotTex?.Dispose();
+        readyTex?.Dispose();
+        warnTex?.Dispose();
+        sepTex?.Dispose();
     }
 }

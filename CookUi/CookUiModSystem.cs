@@ -17,7 +17,7 @@ public class CookUiModSystem : ModSystem
     public override void StartClientSide(ICoreClientAPI api)
     {
         capi = api;
-        preview = new GuiCookingPreview(api);
+        preview = new GuiCookingPreview(api, CookUiConfig.Load(api));
         // Cheap poll: finds an open firepit dialog and refreshes only when pot contents change.
         tickListenerId = api.Event.RegisterGameTickListener(_ => preview.Update(), 100);
     }
