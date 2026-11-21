@@ -355,12 +355,16 @@ public class GuiCookingPreview : HudElement
         {
             count = ing.PortionSizeLitres > 0 ? Litres(servings.Value * ing.PortionSizeLitres) : servings.Value.ToString();
         }
-        string tooltip = Lang.Get(key, info.Detail);
-        if (satiety != null) tooltip += "\n" + Lang.Get("cookui:sat-each", Range(satiety.Value.min, satiety.Value.max));
+        bool rotates = info.Categories.Count > 1;
+        // Rotating slots list only their categories; the rest name the item and its satiety.
+        string? tooltip = rotates ? null : Lang.Get(key, info.Label);
+        if (!rotates && satiety != null) tooltip += "\n" + Lang.Get("cookui:sat-each", Range(satiety.Value.min, satiety.Value.max));
         return new SlotView
         {
             Kind = kind,
             Slot = info.Icon == null ? null : Dummy(info.Icon.Clone()),
+            Cycle = rotates ? info.Categories.Select(c => Dummy(c.Icon.Clone())).ToList() : null,
+            Categories = rotates ? info.Categories.Select(c => c.Name).ToList() : null,
             Tooltip = tooltip,
             Count = count,
         };

@@ -12,11 +12,17 @@ namespace CookUi;
 public sealed class IngredientInfo
 {
     public required ItemStack? Icon;
-    /// <summary>Short name: the item's own name for single-item groups, else the category ("vegetables").</summary>
+    /// <summary>Short name: the item's own name for single-item groups, else the group type ("Vegetables").</summary>
     public required string Label;
-    /// <summary>Label plus, for categories, a few accepted item names.</summary>
-    public required string Detail;
+    /// <summary>
+    /// Kinds of item the group accepts ("Vegetables", "Mushrooms", "Pickled vegetables"...),
+    /// the one holding <see cref="Icon"/> first. Slots rotate through their icons.
+    /// </summary>
+    public required List<IngredientCategory> Categories;
 }
+
+/// <summary>Accepted items sharing a code prefix (vegetable-*, mushroom-*...), with one icon for all of them.</summary>
+public sealed record IngredientCategory(string Name, ItemStack Icon);
 
 /// <summary>
 /// Resolves ingredient groups (including wildcard codes such as "fruit-*") to concrete stacks,
@@ -36,9 +42,9 @@ public class IngredientIcons
         "egg-chicken-raw",
         "grain-spelt",
         "mushroom-fieldmushroom-normal",
+        "pickledvegetable-carrot",
+        "dough-spelt",
     };
-
-    private const int MaxListedNames = 6;
 
     private readonly IWorldAccessor world;
     private readonly Dictionary<CookingRecipeIngredient, IngredientInfo> cache = new(ReferenceEqualityComparer.Instance);
@@ -53,25 +59,27 @@ public class IngredientIcons
 
         var stacks = Stacks(ing);
         ItemStack? icon = PickRepresentative(stacks);
-        var names = stacks.Select(SafeName).Where(n => n.Length > 0).Distinct().ToList();
+        var categories = Categories(stacks);
 
-        string label, detail;
-        if (names.Count == 1)
+        // Rotation order: the representative's category first, showing the representative itself.
+        if (icon != null)
         {
-            label = detail = names[0];
-        }
-        else
-        {
-            label = Capitalize(Lang.GetIfExists("handbook-mealingredient-" + ing.TypeName)
-                               ?? Lang.GetIfExists("foodcategory-" + ing.TypeName)
-                               ?? ing.TypeName);
-            var shown = names.Take(MaxListedNames).ToList();
-            string list = string.Join(", ", shown);
-            if (names.Count > shown.Count) list += ", …";
-            detail = names.Count == 0 ? label : label + ": " + list;
+            int at = categories.FindIndex(c => CategoryKey(c.Icon) == CategoryKey(icon));
+            if (at >= 0)
+            {
+                var cat = categories[at];
+                categories.RemoveAt(at);
+                categories.Insert(0, cat with { Icon = icon });
+            }
         }
 
-        info = new IngredientInfo { Icon = icon, Label = label, Detail = detail };
+        string label = stacks.Count == 1
+            ? SafeName(stacks[0])
+            : Capitalize(Lang.GetIfExists("handbook-mealingredient-" + ing.TypeName)
+                         ?? Lang.GetIfExists("foodcategory-" + ing.TypeName)
+                         ?? ing.TypeName);
+
+        info = new IngredientInfo { Icon = icon, Label = label, Categories = categories };
         cache[ing] = info;
         return info;
     }
@@ -88,10 +96,11 @@ public class IngredientIcons
             if (vs.Code == null) continue;
             if (vs.Code.Path.Contains('*'))
             {
+                // Vanilla matches wildcards by code only, ignoring the declared type: soup lists
+                // "mushroom-*" as an item, but mushrooms are blocks.
                 foreach (var c in world.Collectibles) // items and blocks
                 {
                     if (c?.Code == null || !c.WildCardMatch(vs.Code)) continue;
-                    if ((vs.Type == EnumItemClass.Block) != (c is Block)) continue;
                     if (seen.Add(c.Code)) list.Add(new ItemStack(c));
                 }
             }
@@ -105,6 +114,33 @@ public class IngredientIcons
 
         stacksCache[ing] = list;
         return list;
+    }
+
+    /// <summary>
+    /// Groups accepted items by the first part of their code (vegetable-carrot and vegetable-onion
+    /// are "vegetable", mushroom-* is "mushroom"), in recipe order. A category with one item is
+    /// named after it; larger ones use cookui:family-&lt;key&gt;, else "first item (+N)".
+    /// </summary>
+    private static List<IngredientCategory> Categories(List<ItemStack> stacks)
+    {
+        var result = new List<IngredientCategory>();
+        foreach (var group in stacks.GroupBy(CategoryKey))
+        {
+            var items = group.ToList();
+            var icon = PickRepresentative(items)!;
+            string name = items.Count == 1
+                ? SafeName(icon)
+                : Lang.GetIfExists("cookui:family-" + group.Key) ?? SafeName(icon) + " (+" + (items.Count - 1) + ")";
+            if (name.Length > 0) result.Add(new IngredientCategory(name, icon));
+        }
+        return result;
+    }
+
+    private static string CategoryKey(ItemStack stack)
+    {
+        string path = stack.Collectible.Code.Path;
+        int dash = path.IndexOf('-');
+        return dash < 0 ? path : path[..dash];
     }
 
     /// <summary>

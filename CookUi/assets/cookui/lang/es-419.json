@@ -27,5 +27,18 @@
     "recipe-soup": "Sopa",
     "recipe-porridge": "Papilla",
     "recipe-scrambledeggs": "Huevos revueltos",
-    "recipe-jam": "Mermelada"
+    "recipe-jam": "Mermelada",
+
+    "family-mushroom": "Hongos",
+    "family-pickledvegetable": "Verduras encurtidas",
+    "family-fruit": "Fruta",
+    "family-grain": "Grano",
+    "family-dough": "Masa",
+    "family-vegetable": "Verduras",
+    "family-legume": "Legumbres",
+    "family-redmeat": "Carne roja",
+    "family-poultry": "Aves",
+    "family-fish": "Pescado",
+    "family-egg": "Huevos",
+    "family-spice": "Especias"
 }

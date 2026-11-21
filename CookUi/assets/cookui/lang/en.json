@@ -27,5 +27,18 @@
     "recipe-soup": "Soup",
     "recipe-porridge": "Porridge",
     "recipe-scrambledeggs": "Scrambled eggs",
-    "recipe-jam": "Jam"
+    "recipe-jam": "Jam",
+
+    "family-mushroom": "Mushrooms",
+    "family-pickledvegetable": "Pickled vegetables",
+    "family-fruit": "Fruit",
+    "family-grain": "Grain",
+    "family-dough": "Dough",
+    "family-vegetable": "Vegetables",
+    "family-legume": "Legumes",
+    "family-redmeat": "Red meat",
+    "family-poultry": "Poultry",
+    "family-fish": "Fish",
+    "family-egg": "Eggs",
+    "family-spice": "Spices"
 }

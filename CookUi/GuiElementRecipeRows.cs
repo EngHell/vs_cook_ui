@@ -16,6 +16,8 @@ public sealed class SlotView
     public SlotKind Kind;
     public ItemSlot? Slot;
     public string? Tooltip;
+    /// <summary>Category names listed after <see cref="Tooltip"/>, matching <see cref="Cycle"/>; the shown one is gold.</summary>
+    public List<string>? Categories;
     public string? Count;
     /// <summary>Amount is wrong (uneven stack size); count is drawn in orange.</summary>
     public bool Warn;
@@ -24,6 +26,11 @@ public sealed class SlotView
     /// icons instead of <see cref="Slot"/>, with "+N" in the last cell when there are more than 4.
     /// </summary>
     public List<SlotView>? Choices;
+    /// <summary>
+    /// The group accepts several kinds of item: the icon rotates through these (one per kind)
+    /// instead of always showing <see cref="Slot"/>.
+    /// </summary>
+    public List<ItemSlot>? Cycle;
 }
 
 public sealed class RowView
@@ -45,6 +52,8 @@ public class GuiElementRecipeRows : GuiElement
     public const double SlotGap = 4;
     public const double SeparatorGap = 14;
     public const double RowGap = 6;
+    /// <summary>How long each icon of a rotating slot stays up.</summary>
+    private const float CycleSeconds = 1f;
 
     private static readonly int RequiredColor = ColorUtil.ToRgba(170, 95, 95, 95);
     private static readonly int OptionalColor = ColorUtil.ToRgba(90, 70, 70, 70);
@@ -55,7 +64,10 @@ public class GuiElementRecipeRows : GuiElement
     private readonly Dictionary<string, LoadedTexture> textCache = new();
     private readonly TooltipRenderer tooltip;
     private LoadedTexture? slotTex, readyTex, warnTex, sepTex;
-    private string? hover;
+    private SlotView? hover;
+    /// <summary>Drives rotating icons; paused while the mouse is over a recipe row.</summary>
+    private float cycleClock;
+    private int cycleFrame;
 
     /// <param name="clipBounds">Visible (scrolled) area; slots outside it don't react to the mouse.</param>
     public GuiElementRecipeRows(ICoreClientAPI capi, ElementBounds bounds, ElementBounds clipBounds, List<RowView> rows, int slotCount)
@@ -124,6 +136,18 @@ public class GuiElementRecipeRows : GuiElement
         bool mouseInView = clipBounds.PointInside(mx, my);
         hover = null;
 
+        // Hovering a recipe freezes the rotation so the icons hold still while the tooltip is read.
+        bool overRow = mouseInView && OverAnyRow(mx, my);
+        if (!overRow)
+        {
+            cycleClock += deltaTime;
+            if (cycleClock >= CycleSeconds)
+            {
+                cycleClock %= CycleSeconds;
+                cycleFrame++;
+            }
+        }
+
         for (int r = 0; r < rows.Count; r++)
         {
             var row = rows[r];
@@ -156,6 +180,19 @@ public class GuiElementRecipeRows : GuiElement
         }
     }
 
+    private bool OverAnyRow(int mx, int my)
+    {
+        double left = Bounds.renderX, right = left + scaled(WidthFor(slotCount));
+        if (mx < left || mx >= right) return false;
+        double size = scaled(SlotSize);
+        for (int r = 0; r < rows.Count; r++)
+        {
+            double y = Bounds.renderY + scaled(RowY(r));
+            if (my >= y && my < y + size) return true;
+        }
+        return false;
+    }
+
     /// <summary>
     /// Draws the hovered slot's tooltip. Call during the GUI pass but after the composer has
     /// rendered (scroll clip already released), e.g. from the dialog's OnRenderGUI after base.
@@ -164,8 +201,27 @@ public class GuiElementRecipeRows : GuiElement
     /// </summary>
     public void RenderTooltip()
     {
-        tooltip.Render(hover, api.Input.MouseX, api.Input.MouseY);
+        tooltip.Render(hover == null ? null : TooltipLines(hover), api.Input.MouseX, api.Input.MouseY);
     }
+
+    private List<TooltipLine> TooltipLines(SlotView view)
+    {
+        var lines = new List<TooltipLine>();
+        if (!string.IsNullOrEmpty(view.Tooltip)) lines.Add(new TooltipLine(view.Tooltip));
+        if (view.Categories is { Count: > 1 } cats)
+        {
+            int current = view.Cycle is { Count: > 1 } cycle ? cycleFrame % cycle.Count : 0;
+            for (int i = 0; i < cats.Count; i++)
+            {
+                lines.Add(new TooltipLine("- " + cats[i], i == current));
+            }
+        }
+        return lines;
+    }
+
+    /// <summary>The icon to draw this frame: the current step of the rotation, or the fixed slot.</summary>
+    private ItemSlot? CurrentSlot(SlotView view) =>
+        view.Cycle is { Count: > 1 } cycle ? cycle[cycleFrame % cycle.Count] : view.Slot;
 
     private void Blit(LoadedTexture? tex, double x, double y)
     {
@@ -173,14 +229,14 @@ public class GuiElementRecipeRows : GuiElement
         api.Render.Render2DTexturePremultipliedAlpha(tex.TextureId, x, y, tex.Width, tex.Height, 50);
     }
 
-    /// <returns>The slot's tooltip when the mouse is over it.</returns>
-    private string? RenderSlot(SlotView view, double x, double y, double size, int mx, int my)
+    /// <returns>The slot when the mouse is over it and it has a tooltip.</returns>
+    private SlotView? RenderSlot(SlotView view, double x, double y, double size, int mx, int my)
     {
         if (view.Choices is { Count: > 0 } choices)
         {
             RenderMosaic(view, choices, x, y, size);
         }
-        else if (view.Slot?.Itemstack != null)
+        else if (CurrentSlot(view) is { Itemstack: not null } slot)
         {
             int color = view.Kind switch
             {
@@ -188,7 +244,7 @@ public class GuiElementRecipeRows : GuiElement
                 SlotKind.Optional => OptionalColor,
                 _ => -1,
             };
-            api.Render.RenderItemstackToGui(view.Slot, x + size / 2, y + size / 2, 100,
+            api.Render.RenderItemstackToGui(slot, x + size / 2, y + size / 2, 100,
                 (float)(size * 0.58), color, true, false, false);
         }
 
@@ -204,7 +260,7 @@ public class GuiElementRecipeRows : GuiElement
         }
 
         bool inside = mx >= x && mx < x + size && my >= y && my < y + size;
-        return inside ? view.Tooltip : null;
+        return inside && (view.Tooltip != null || view.Categories != null) ? view : null;
     }
 
     /// <summary>Up to four small icons in a 2×2 grid; with more choices the last cell says "+N".</summary>
@@ -216,7 +272,7 @@ public class GuiElementRecipeRows : GuiElement
         double cell = size / 2;
         for (int i = 0; i < icons; i++)
         {
-            var slot = choices[i].Slot;
+            var slot = CurrentSlot(choices[i]);
             if (slot?.Itemstack == null) continue;
             double cx = x + (i % 2) * cell + cell / 2;
             double cy = y + (i / 2) * cell + cell / 2;
