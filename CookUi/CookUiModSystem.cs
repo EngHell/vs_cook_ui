@@ -1,15 +1,16 @@
-﻿using Vintagestory.API.Client;
+﻿using System.Collections.Generic;
+using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 
 namespace CookUi;
 
 /// <summary>
-/// Client-only mod: shows which cooking recipes the pot in an open firepit can make.
+/// Client-only mod: shows which recipes an open cooking station (firepit pot...) can make.
 /// </summary>
 public class CookUiModSystem : ModSystem
 {
     private ICoreClientAPI? capi;
-    private GuiCookingPreview? preview;
+    private readonly List<RecipeWindow> windows = new();
     private long tickListenerId;
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Client;
@@ -17,19 +18,25 @@ public class CookUiModSystem : ModSystem
     public override void StartClientSide(ICoreClientAPI api)
     {
         capi = api;
-        preview = new GuiCookingPreview(api, CookUiConfig.Load(api));
-        // Cheap poll: finds an open firepit dialog and refreshes only when pot contents change.
-        tickListenerId = api.Event.RegisterGameTickListener(_ => preview.Update(), 100);
+        var config = CookUiConfig.Load(api);
+
+        windows.Add(new FirepitPotWindow(api, config));
+
+        // Cheap poll: finds open station dialogs and refreshes only when contents change.
+        tickListenerId = api.Event.RegisterGameTickListener(_ =>
+        {
+            foreach (var w in windows) w.Update();
+        }, 100);
     }
 
     public override void Dispose()
     {
-        if (preview != null)
+        capi?.Event.UnregisterGameTickListener(tickListenerId);
+        foreach (var w in windows)
         {
-            capi?.Event.UnregisterGameTickListener(tickListenerId);
-            preview.TryClose();
-            preview.Dispose();
-            preview = null;
+            w.TryClose();
+            w.Dispose();
         }
+        windows.Clear();
     }
 }

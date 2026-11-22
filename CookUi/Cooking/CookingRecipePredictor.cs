@@ -6,18 +6,6 @@ using Vintagestory.GameContent;
 
 namespace CookUi;
 
-public enum PredictionState
-{
-    /// <summary>Ingredients match; the pot will cook this.</summary>
-    Ready,
-    /// <summary>Everything required is present but quantities are uneven.</summary>
-    RatioWrong,
-    /// <summary>Matches, but makes more servings than the pot holds.</summary>
-    TooMuch,
-    /// <summary>Current contents fit this recipe; more ingredients are required.</summary>
-    Missing,
-}
-
 /// <param name="Counts">How many pot stacks were assigned to each recipe ingredient group.</param>
 /// <param name="MissingTotal">Pot slots that still need a required ingredient.</param>
 public record RecipePrediction(
@@ -28,11 +16,12 @@ public record RecipePrediction(
     int MissingTotal);
 
 /// <summary>
-/// Works out which cooking recipes the current pot contents are heading toward.
+/// Works out which cooking recipes (pot, or anything using vanilla <see cref="CookingRecipe"/>s
+/// such as A Culinary Artillery's mixing bowl) the current contents are heading toward.
 /// Ingredient assignment mirrors <see cref="CookingRecipe.Matches(ItemStack[], ref int)"/>
 /// (greedy, first matching ingredient group with room) so predictions agree with vanilla.
 /// </summary>
-public static class RecipePredictor
+public static class CookingRecipePredictor
 {
     public static List<RecipePrediction> Predict(
         IEnumerable<CookingRecipe> recipes,
