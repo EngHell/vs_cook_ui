@@ -36,6 +36,10 @@ internal static class Aca
         }
     }
 
+    /// <summary>ACA mixing bowl recipes: plain <see cref="CookingRecipe"/>s kept in ACA's own registry.</summary>
+    public static IEnumerable<CookingRecipe> MixingRecipes(ICoreClientAPI capi) =>
+        RegistryList(capi, "MixingRecipes")?.OfType<CookingRecipe>() ?? Enumerable.Empty<CookingRecipe>();
+
     /// <summary>Whether <paramref name="obj"/>'s class is, or derives from, the class named <paramref name="fullName"/>.</summary>
     public static bool IsA(object? obj, string fullName)
     {
@@ -47,19 +51,9 @@ internal static class Aca
     }
 }
 
-/// <summary>ACA mixing bowl recipes: plain <see cref="CookingRecipe"/>s kept in ACA's own registry.</summary>
-public sealed class AcaMixingRecipeProvider : IRecipeProvider<CookingRecipe>
-{
-    private readonly ICoreClientAPI capi;
-
-    public AcaMixingRecipeProvider(ICoreClientAPI capi) => this.capi = capi;
-
-    public IEnumerable<CookingRecipe> GetRecipes() =>
-        Aca.RegistryList(capi, "MixingRecipes")?.OfType<CookingRecipe>() ?? Enumerable.Empty<CookingRecipe>();
-}
 
 /// <summary>Our view of one ACA simmer recipe (saucepan/cauldron on a firepit).</summary>
-public sealed class SimmerRecipeInfo
+internal sealed class SimmerRecipeInfo
 {
     public required string Code;
     /// <summary>Every ingredient is required, one slot each, in multiples of its Quantity.</summary>
@@ -71,14 +65,14 @@ public sealed class SimmerRecipeInfo
 }
 
 /// <summary>ACA simmer recipes, wrapped once per recipe object.</summary>
-public sealed class AcaSimmerRecipeProvider : IRecipeProvider<SimmerRecipeInfo>
+internal sealed class AcaSimmerRecipes
 {
     private readonly ICoreClientAPI capi;
     private readonly ConditionalWeakTable<object, SimmerRecipeInfo?> wrapped = new();
 
-    public AcaSimmerRecipeProvider(ICoreClientAPI capi) => this.capi = capi;
+    public AcaSimmerRecipes(ICoreClientAPI capi) => this.capi = capi;
 
-    public IEnumerable<SimmerRecipeInfo> GetRecipes()
+    public IEnumerable<SimmerRecipeInfo> All()
     {
         var list = Aca.RegistryList(capi, "SimmerRecipes");
         if (list == null) yield break;
@@ -123,7 +117,7 @@ public sealed class AcaSimmerRecipeProvider : IRecipeProvider<SimmerRecipeInfo>
 }
 
 /// <summary>Our view of one ACA kneading (dough) recipe, made in a mixing bowl without a pot.</summary>
-public sealed class KneadingRecipeInfo
+internal sealed class KneadingRecipeInfo
 {
     /// <summary>
     /// One entry per ingredient group; each group takes exactly one slot and accepts any one of
@@ -137,14 +131,14 @@ public sealed class KneadingRecipeInfo
 }
 
 /// <summary>ACA kneading recipes, wrapped once per recipe object.</summary>
-public sealed class AcaKneadingRecipeProvider : IRecipeProvider<KneadingRecipeInfo>
+internal sealed class AcaKneadingRecipes
 {
     private readonly ICoreClientAPI capi;
     private readonly ConditionalWeakTable<object, KneadingRecipeInfo?> wrapped = new();
 
-    public AcaKneadingRecipeProvider(ICoreClientAPI capi) => this.capi = capi;
+    public AcaKneadingRecipes(ICoreClientAPI capi) => this.capi = capi;
 
-    public IEnumerable<KneadingRecipeInfo> GetRecipes()
+    public IEnumerable<KneadingRecipeInfo> All()
     {
         var list = Aca.RegistryList(capi, "DoughRecipes");
         if (list == null) yield break;

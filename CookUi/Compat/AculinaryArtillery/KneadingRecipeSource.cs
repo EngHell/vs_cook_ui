@@ -14,32 +14,26 @@ namespace CookUi.Compat.AculinaryArtillery;
 /// slots and accepts any one of its inputs, at least that input's amount. Nothing else may be in
 /// the bowl. Each mixing cycle makes one batch and uses one amount of each, leaving the rest.
 /// </summary>
-public sealed class KneadingWindow : RecipeWindow<GuiDialogBlockEntity, StationState>
+public sealed class KneadingRecipeSource : IRecipeSource
 {
-    private readonly IRecipeProvider<KneadingRecipeInfo> provider;
+    private readonly ICoreClientAPI capi;
+    private readonly AcaKneadingRecipes recipes;
     private IngredientIcons? icons;
 
-    public KneadingWindow(ICoreClientAPI capi, CookUiConfig config) : base(capi, config)
+    public KneadingRecipeSource(ICoreClientAPI capi)
     {
-        provider = new AcaKneadingRecipeProvider(capi);
+        this.capi = capi;
+        recipes = new AcaKneadingRecipes(capi);
     }
-
-    public override string Id => "aca-kneading";
-    protected override string TitleLangKey => "cookui:panel-title-kneading";
 
     private IngredientIcons Icons => icons ??= new IngredientIcons(capi.World);
 
-    protected override bool IsHost(GuiDialogBlockEntity dlg) => Aca.IsA(dlg, Aca.MixingBowlDialog);
+    // With a pot in, the bowl mixes meals instead.
+    public bool AppliesTo(StationContents contents) => contents.Container?.Collectible is not BlockCookingContainer;
 
-    protected override StationState? GetState(GuiDialogBlockEntity host)
-    {
-        var slots = MixingBowl.Ingredients(host.Inventory);
-        if (slots == null) return null;
-        var input = host.Inventory[MixingBowl.InputSlot].Itemstack;
-        // With a pot in, the bowl mixes meals instead (MixingBowlWindow).
-        if (input?.Collectible is BlockCookingContainer) return null;
-        return new StationState(input, slots);
-    }
+    // Over a thousand recipes: listing them all for an empty bowl isn't useful.
+    public string? EmptyNote(StationContents contents) =>
+        contents.Slots.All(s => s.Empty) ? Lang.Get("cookui:knead-add-ingredient") : null;
 
     /// <param name="InputOf">For each stack in the bowl, the group input it counts as.</param>
     /// <param name="GroupOf">For each stack in the bowl, the recipe group it fills.</param>
@@ -48,27 +42,20 @@ public sealed class KneadingWindow : RecipeWindow<GuiDialogBlockEntity, StationS
         KneadingRecipeInfo Recipe, string Name, PredictionState State, int Missing,
         int[] GroupOf, CraftingRecipeIngredient[] InputOf, int Mixes);
 
-    protected override RecipeGrid BuildGrid(StationState state)
+    public IEnumerable<RecipeRow> GetRows(StationContents contents)
     {
-        var slotArray = state.Slots.ToArray();
-        var stacks = Stacks(slotArray);
-        int slotCount = slotArray.Length;
+        var slotArray = contents.Slots.ToArray();
+        var stacks = RecipeFormat.Stacks(slotArray);
+        if (stacks.Length == 0) return Enumerable.Empty<RecipeRow>();
 
-        // Over a thousand recipes: listing them all for an empty bowl isn't useful.
-        if (stacks.Length == 0)
-        {
-            return new RecipeGrid(slotCount, new List<RowView>(), Lang.Get("cookui:knead-add-ingredient"));
-        }
-
-        var rows = provider.GetRecipes()
+        return recipes.All()
             .Select(r => Analyze(r, stacks, slotArray))
             .Where(p => p != null).Cast<Prediction>()
-            .OrderBy(p => p.State switch { PredictionState.Ready => 0, PredictionState.RatioWrong => 1, _ => 2 })
+            .OrderBy(p => RecipeFormat.Rank(p.State))
             .ThenBy(p => p.Missing)
             .ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(p => BuildRow(p, stacks, slotCount))
+            .Select(p => BuildRow(p, stacks, slotArray.Length))
             .ToList();
-        return new RecipeGrid(slotCount, rows, Lang.Get("cookui:no-recipe-fits"));
     }
 
     private Prediction? Analyze(KneadingRecipeInfo recipe, ItemStack[] stacks, ItemSlot[] slots)
@@ -144,9 +131,9 @@ public sealed class KneadingWindow : RecipeWindow<GuiDialogBlockEntity, StationS
         return false;
     }
 
-    private RowView BuildRow(Prediction p, ItemStack[] stacks, int slotCount)
+    private RecipeRow BuildRow(Prediction p, ItemStack[] stacks, int slotCount)
     {
-        var slots = new List<SlotView>();
+        var slots = new List<RecipeSlot>();
         var filled = new bool[p.Recipe.Groups.Length];
 
         for (int s = 0; s < stacks.Length; s++)
@@ -154,13 +141,13 @@ public sealed class KneadingWindow : RecipeWindow<GuiDialogBlockEntity, StationS
             var stack = stacks[s];
             var input = p.InputOf[s];
             filled[p.GroupOf[s]] = true;
-            string tooltip = IngredientIcons.SafeName(stack) + "\n" + Lang.Get("cookui:knead-per-mix", AmountOf(stack, input.Quantity));
-            slots.Add(new SlotView
+            string tooltip = IngredientIcons.SafeName(stack) + "\n" + Lang.Get("cookui:knead-per-mix", RecipeFormat.AmountOf(stack, input.Quantity));
+            slots.Add(new RecipeSlot
             {
                 Kind = SlotKind.Present,
-                Slot = Dummy(stack.Clone()),
+                Icon = stack.Clone(),
                 Tooltip = tooltip,
-                Count = AmountLabel(stack),
+                Count = RecipeFormat.AmountLabel(stack),
                 Warn = stack.StackSize < input.Quantity,
             });
         }
@@ -170,13 +157,13 @@ public sealed class KneadingWindow : RecipeWindow<GuiDialogBlockEntity, StationS
             if (!filled[g]) slots.Add(Ghost(p.Recipe.Groups[g]));
         }
 
-        while (slots.Count < slotCount) slots.Add(new SlotView { Kind = SlotKind.Empty });
+        while (slots.Count < slotCount) slots.Add(RecipeSlot.Empty());
 
-        return new RowView { Meal = ResultSlot(p), State = p.State, Ingredients = slots };
+        return new RecipeRow { Result = ResultSlot(p), State = p.State, Ingredients = slots };
     }
 
     /// <summary>A missing group: its one input, or a slot rotating through all the inputs it accepts.</summary>
-    private SlotView Ghost(CraftingRecipeIngredient[] group)
+    private RecipeSlot Ghost(CraftingRecipeIngredient[] group)
     {
         if (group.Length == 1)
         {
@@ -184,11 +171,11 @@ public sealed class KneadingWindow : RecipeWindow<GuiDialogBlockEntity, StationS
             var info = Icons.Get(ing);
             string amount = InputAmount(ing, info);
             bool rotates = info.Categories.Count > 1;
-            return new SlotView
+            return new RecipeSlot
             {
                 Kind = SlotKind.Required,
-                Slot = info.Icon == null ? null : Dummy(info.Icon.Clone()),
-                Cycle = rotates ? info.Categories.Select(c => Dummy(c.Icon.Clone())).ToList() : null,
+                Icon = info.Icon?.Clone(),
+                Cycle = rotates ? info.Categories.Select(c => c.Icon.Clone()).ToList() : null,
                 Categories = rotates ? info.Categories.Select(c => c.Name).ToList() : null,
                 Tooltip = Lang.Get("cookui:slot-needed", info.Label) + "\n" + Lang.Get("cookui:knead-per-mix", amount),
                 Count = amount,
@@ -196,7 +183,7 @@ public sealed class KneadingWindow : RecipeWindow<GuiDialogBlockEntity, StationS
         }
 
         // Several inputs: rotate through one icon per input, each listed with its own amount.
-        var icons = new List<ItemSlot>();
+        var icons = new List<ItemStack>();
         var labels = new List<string>();
         var amounts = new HashSet<string>();
         foreach (var ing in group)
@@ -205,14 +192,14 @@ public sealed class KneadingWindow : RecipeWindow<GuiDialogBlockEntity, StationS
             if (info.Icon == null) continue;
             string amount = InputAmount(ing, info);
             amounts.Add(amount);
-            icons.Add(Dummy(info.Icon.Clone()));
+            icons.Add(info.Icon.Clone());
             labels.Add(info.Label + " (" + amount + ")");
         }
 
-        return new SlotView
+        return new RecipeSlot
         {
             Kind = SlotKind.Required,
-            Slot = icons.FirstOrDefault(),
+            Icon = icons.FirstOrDefault(),
             Cycle = icons.Count > 1 ? icons : null,
             Categories = labels.Count > 1 ? labels : null,
             Tooltip = labels.Count > 1 ? Lang.Get("cookui:slot-needed-any") : labels.Count == 1 ? Lang.Get("cookui:slot-needed", labels[0]) : null,
@@ -223,13 +210,13 @@ public sealed class KneadingWindow : RecipeWindow<GuiDialogBlockEntity, StationS
     private static string InputAmount(CraftingRecipeIngredient ing, IngredientInfo info)
     {
         var sample = info.Icon ?? ing.ResolvedItemStack;
-        return sample == null ? ing.Quantity.ToString() : AmountOf(sample, ing.Quantity);
+        return sample == null ? ing.Quantity.ToString() : RecipeFormat.AmountOf(sample, ing.Quantity);
     }
 
-    private SlotView ResultSlot(Prediction p)
+    private RecipeSlot ResultSlot(Prediction p)
     {
         var icon = p.Recipe.Output.Clone();
-        string perMix = AmountLabel(icon) ?? icon.StackSize.ToString();
+        string perMix = RecipeFormat.AmountLabel(icon) ?? icon.StackSize.ToString();
         icon.StackSize = 1;
 
         string status = p.State switch
@@ -239,10 +226,10 @@ public sealed class KneadingWindow : RecipeWindow<GuiDialogBlockEntity, StationS
             _ => Lang.Get("cookui:needs-more", p.Missing),
         };
 
-        return new SlotView
+        return new RecipeSlot
         {
             Kind = SlotKind.Present,
-            Slot = Dummy(icon),
+            Icon = icon,
             Tooltip = p.Name + "\n" + status,
             Count = p.State == PredictionState.Ready ? perMix : null,
         };

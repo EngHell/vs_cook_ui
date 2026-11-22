@@ -11,47 +11,45 @@ using Vintagestory.GameContent;
 namespace CookUi;
 
 /// <summary>
-/// What a station that makes vanilla-style <see cref="CookingRecipe"/>s holds.
+/// Rows for anything that makes vanilla-style <see cref="CookingRecipe"/>s in a cooking pot: the
+/// firepit, A Culinary Artillery's mixing bowl... Each row shows the meal in a bowl with its
+/// satiety, and the ingredient groups still needed or allowed.
 /// </summary>
-/// <param name="MaxServings">Most servings the container takes (pot's MaxServingSize).</param>
-/// <param name="DirtyPot">Dirty pots only make non-food recipes.</param>
-public sealed record CookingStationState(ItemStack? Container, IReadOnlyList<ItemSlot> Slots, int MaxServings, bool DirtyPot)
-    : StationState(Container, Slots);
-
-/// <summary>
-/// Recipe window for anything that makes <see cref="CookingRecipe"/>s: the firepit's cooking pot,
-/// A Culinary Artillery's mixing bowl... Rows show the meal in a bowl with its satiety, and the
-/// ingredient groups still needed or allowed. Derived classes only say which dialog they attach to
-/// and what it holds; the recipes come from an <see cref="IRecipeProvider{TRecipe}"/>.
-/// </summary>
-public abstract class CookingRecipeWindow<THost> : RecipeWindow<THost, CookingStationState>
-    where THost : GuiDialog
+public sealed class CookingRecipeSource : IRecipeSource
 {
-    private readonly IRecipeProvider<CookingRecipe> provider;
+    private readonly ICoreClientAPI capi;
+    private readonly Func<IEnumerable<CookingRecipe>> recipes;
+    private readonly bool dirtyPotsMakeFood;
     private IngredientIcons? icons;
 
-    protected CookingRecipeWindow(ICoreClientAPI capi, CookUiConfig config, IRecipeProvider<CookingRecipe> provider)
-        : base(capi, config)
+    /// <param name="recipes">Recipe list, read each time the contents change.</param>
+    /// <param name="dirtyPotsMakeFood">False for the firepit, where a dirty pot only makes non-food.</param>
+    public CookingRecipeSource(ICoreClientAPI capi, Func<IEnumerable<CookingRecipe>> recipes, bool dirtyPotsMakeFood = false)
     {
-        this.provider = provider;
+        this.capi = capi;
+        this.recipes = recipes;
+        this.dirtyPotsMakeFood = dirtyPotsMakeFood;
     }
 
-    protected IngredientIcons Icons => icons ??= new IngredientIcons(capi.World);
+    /// <summary>Vanilla's cooking recipes, as synced from the server.</summary>
+    public static CookingRecipeSource Vanilla(ICoreClientAPI capi) =>
+        new(capi, () => capi.GetCookingRecipes() ?? new List<CookingRecipe>());
 
-    protected override string Signature(CookingStationState state) =>
-        base.Signature(state) + (state.DirtyPot ? "|dirty" : "") + "|" + state.MaxServings;
+    private IngredientIcons Icons => icons ??= new IngredientIcons(capi.World);
 
-    protected override RecipeGrid BuildGrid(CookingStationState state)
+    public bool AppliesTo(StationContents contents) => contents.Container?.Collectible is BlockCookingContainer;
+
+    public IEnumerable<RecipeRow> GetRows(StationContents contents)
     {
-        var stacks = Stacks(state.Slots);
-        int slotCount = state.Slots.Count;
-        var predictions = CookingRecipePredictor.Predict(provider.GetRecipes(), stacks, slotCount, state.MaxServings, state.DirtyPot);
-        var rows = predictions.Select(p => BuildRow(p, stacks, slotCount, state.MaxServings)).ToList();
-        string note = Lang.Get(stacks.Length == 0 ? "cookui:no-recipes" : "cookui:no-recipe-fits");
-        return new RecipeGrid(slotCount, rows, note);
+        if (contents.Container?.Collectible is not BlockCookingContainer pot) return Enumerable.Empty<RecipeRow>();
+        bool dirty = !dirtyPotsMakeFood && pot.Attributes?["isDirtyPot"].AsBool() == true;
+        var stacks = RecipeFormat.Stacks(contents.Slots);
+        int slotCount = contents.Slots.Count;
+        var predictions = CookingRecipePredictor.Predict(recipes(), stacks, slotCount, pot.MaxServingSize, dirty);
+        return predictions.Select(p => BuildRow(p, stacks, slotCount, pot.MaxServingSize)).ToList();
     }
 
-    private RowView BuildRow(RecipePrediction p, ItemStack[] stacks, int slotCount, int maxServings)
+    private RecipeRow BuildRow(RecipePrediction p, ItemStack[] stacks, int slotCount, int maxServings)
     {
         var recipe = p.Recipe;
         var ingredients = recipe.Ingredients!;
@@ -61,7 +59,7 @@ public abstract class CookingRecipeWindow<THost> : RecipeWindow<THost, CookingSt
         int? servings = p.State is PredictionState.Ready or PredictionState.TooMuch ? p.Servings : null;
         if (servings == null)
         {
-            var solid = stacks.Where(s => !IsLiquid(s)).Select(s => s.StackSize).ToList();
+            var solid = stacks.Where(s => !RecipeFormat.IsLiquid(s)).Select(s => s.StackSize).ToList();
             if (solid.Count > 0)
             {
                 servings = Math.Min(maxServings, solid.GroupBy(n => n).OrderByDescending(g => g.Count()).ThenBy(g => g.Key).First().Key);
@@ -69,7 +67,7 @@ public abstract class CookingRecipeWindow<THost> : RecipeWindow<THost, CookingSt
         }
 
         var entity = capi.World.Player?.Entity;
-        var slots = new List<SlotView>();
+        var slots = new List<RecipeSlot>();
         var mealContents = new List<ItemStack>();
         var nutrition = new MealNutritionSummary();
 
@@ -85,12 +83,12 @@ public abstract class CookingRecipeWindow<THost> : RecipeWindow<THost, CookingSt
             {
                 float sat = props.Satiety * IngredientIcons.SpoilageMul(capi.World, stack, entity);
                 nutrition.AddConfirmed(props.FoodCategory, sat);
-                tooltip += "\n" + Lang.Get("cookui:sat-each", Round(sat));
+                tooltip += "\n" + Lang.Get("cookui:sat-each", RecipeFormat.Round(sat));
             }
-            bool warn = servings != null && !IsLiquid(stack) && stack.StackSize != servings;
+            bool warn = servings != null && !RecipeFormat.IsLiquid(stack) && stack.StackSize != servings;
             var icon = stack.Clone();
             mealContents.Add(icon);
-            slots.Add(new SlotView { Kind = SlotKind.Present, Slot = Dummy(icon), Tooltip = tooltip, Count = AmountLabel(stack), Warn = warn });
+            slots.Add(new RecipeSlot { Kind = SlotKind.Present, Icon = icon, Tooltip = tooltip, Count = RecipeFormat.AmountLabel(stack), Warn = warn });
         }
 
         // 2. Required ingredients still missing.
@@ -102,7 +100,7 @@ public abstract class CookingRecipeWindow<THost> : RecipeWindow<THost, CookingSt
                 var range = Icons.SatietyRange(ingredients[j], entity);
                 if (range != null) nutrition.AddNeeded(range.Value);
                 var view = Ghost(SlotKind.Required, ingredients[j], servings, range);
-                if (view.Slot?.Itemstack != null) mealContents.Add(view.Slot.Itemstack);
+                if (view.Icon != null) mealContents.Add(view.Icon);
                 slots.Add(view);
             }
         }
@@ -110,11 +108,11 @@ public abstract class CookingRecipeWindow<THost> : RecipeWindow<THost, CookingSt
         // 3. Optional room.
         AddOptionalSlots(ingredients, counts, slots, slotCount, servings, entity, nutrition);
 
-        while (slots.Count < slotCount) slots.Add(new SlotView { Kind = SlotKind.Empty });
+        while (slots.Count < slotCount) slots.Add(RecipeSlot.Empty());
 
-        return new RowView
+        return new RecipeRow
         {
-            Meal = MealSlot(p, stacks, mealContents, nutrition),
+            Result = MealSlot(p, stacks, mealContents, nutrition),
             State = p.State,
             Ingredients = slots,
         };
@@ -133,7 +131,7 @@ public abstract class CookingRecipeWindow<THost> : RecipeWindow<THost, CookingSt
     /// merged into one kind. If every kind gets its own slot, each slot shows one kind; otherwise
     /// every free slot is a "any of these" slot drawing a small mosaic of all the kinds.
     /// </summary>
-    private void AddOptionalSlots(CookingRecipeIngredient[] ingredients, int[] counts, List<SlotView> slots,
+    private void AddOptionalSlots(CookingRecipeIngredient[] ingredients, int[] counts, List<RecipeSlot> slots,
         int slotCount, int? servings, EntityAgent? entity, MealNutritionSummary nutrition)
     {
         var kinds = new List<OptionalKind>();
@@ -192,13 +190,13 @@ public abstract class CookingRecipeWindow<THost> : RecipeWindow<THost, CookingSt
             string label = Icons.Get(k.Ingredient).Label;
             if (choices[i].Count != null) label += " (" + choices[i].Count + ")";
             tooltip.Append('\n').Append(k.Satiety is { } s
-                ? Lang.Get("cookui:slot-choice-sat", label, k.Room, Range(s.min, s.max))
+                ? Lang.Get("cookui:slot-choice-sat", label, k.Room, RecipeFormat.Range(s.min, s.max))
                 : Lang.Get("cookui:slot-choice", label, k.Room));
         }
         string text = tooltip.ToString();
         for (int i = 0; i < optSlots; i++)
         {
-            slots.Add(new SlotView { Kind = SlotKind.Optional, Choices = choices, Tooltip = text });
+            slots.Add(new RecipeSlot { Kind = SlotKind.Optional, Choices = choices, Tooltip = text });
         }
     }
 
@@ -206,31 +204,31 @@ public abstract class CookingRecipeWindow<THost> : RecipeWindow<THost, CookingSt
         string.Join(",", Icons.Stacks(ing).Select(s => s.Collectible.Code.ToString()).OrderBy(c => c, StringComparer.Ordinal))
         + "|" + ing.PortionSizeLitres.ToString(CultureInfo.InvariantCulture);
 
-    private SlotView Ghost(SlotKind kind, CookingRecipeIngredient ing, int? servings, (float min, float max)? satiety)
+    private RecipeSlot Ghost(SlotKind kind, CookingRecipeIngredient ing, int? servings, (float min, float max)? satiety)
     {
         var info = Icons.Get(ing);
         string key = kind == SlotKind.Required ? "cookui:slot-needed" : "cookui:slot-optional";
         string? count = null;
         if (servings != null)
         {
-            count = ing.PortionSizeLitres > 0 ? Litres(servings.Value * ing.PortionSizeLitres) : servings.Value.ToString();
+            count = ing.PortionSizeLitres > 0 ? RecipeFormat.Litres(servings.Value * ing.PortionSizeLitres) : servings.Value.ToString();
         }
         bool rotates = info.Categories.Count > 1;
         // Rotating slots list only their categories; the rest name the item and its satiety.
         string? tooltip = rotates ? null : Lang.Get(key, info.Label);
-        if (!rotates && satiety != null) tooltip += "\n" + Lang.Get("cookui:sat-each", Range(satiety.Value.min, satiety.Value.max));
-        return new SlotView
+        if (!rotates && satiety != null) tooltip += "\n" + Lang.Get("cookui:sat-each", RecipeFormat.Range(satiety.Value.min, satiety.Value.max));
+        return new RecipeSlot
         {
             Kind = kind,
-            Slot = info.Icon == null ? null : Dummy(info.Icon.Clone()),
-            Cycle = rotates ? info.Categories.Select(c => Dummy(c.Icon.Clone())).ToList() : null,
+            Icon = info.Icon?.Clone(),
+            Cycle = rotates ? info.Categories.Select(c => c.Icon.Clone()).ToList() : null,
             Categories = rotates ? info.Categories.Select(c => c.Name).ToList() : null,
             Tooltip = tooltip,
             Count = count,
         };
     }
 
-    private SlotView MealSlot(RecipePrediction p, ItemStack[] stacks, List<ItemStack> contents, MealNutritionSummary nutrition)
+    private RecipeSlot MealSlot(RecipePrediction p, ItemStack[] stacks, List<ItemStack> contents, MealNutritionSummary nutrition)
     {
         var recipe = p.Recipe;
         ItemStack? icon = null;
@@ -262,15 +260,15 @@ public abstract class CookingRecipeWindow<THost> : RecipeWindow<THost, CookingSt
             icon = MealBowl(recipe, contents);
         }
 
-        string status = StatusText(p.State, p.Servings, p.MissingTotal);
+        string status = RecipeFormat.Status(p.State, p.Servings, p.MissingTotal);
 
         var tooltip = new StringBuilder(name).Append('\n').Append(status);
         if (food) AppendNutrition(tooltip, p, nutrition);
 
-        return new SlotView
+        return new RecipeSlot
         {
             Kind = SlotKind.Present,
-            Slot = icon == null ? null : Dummy(icon),
+            Icon = icon,
             Tooltip = tooltip.ToString(),
             Count = p.State is PredictionState.Ready or PredictionState.TooMuch ? p.Servings.ToString() : null,
             Warn = p.State == PredictionState.TooMuch,
@@ -285,24 +283,24 @@ public abstract class CookingRecipeWindow<THost> : RecipeWindow<THost, CookingSt
         {
             // Everything required is in the pot: these are the real numbers.
             if (p.State == PredictionState.Ready)
-                sb.Append('\n').Append(Lang.Get("cookui:sat-ready", Round(n.Confirmed), Round(n.Confirmed * p.Servings)));
+                sb.Append('\n').Append(Lang.Get("cookui:sat-ready", RecipeFormat.Round(n.Confirmed), RecipeFormat.Round(n.Confirmed * p.Servings)));
             else
-                sb.Append('\n').Append(Lang.Get("cookui:sat-per-serving", Round(n.Confirmed)));
+                sb.Append('\n').Append(Lang.Get("cookui:sat-per-serving", RecipeFormat.Round(n.Confirmed)));
         }
         else
         {
-            if (n.Confirmed > 0) sb.Append('\n').Append(Lang.Get("cookui:sat-so-far", Round(n.Confirmed)));
+            if (n.Confirmed > 0) sb.Append('\n').Append(Lang.Get("cookui:sat-so-far", RecipeFormat.Round(n.Confirmed)));
             sb.Append('\n').Append(Lang.Get("cookui:sat-finished",
-                Range(n.Confirmed + n.NeededMin, n.Confirmed + n.NeededMax)));
+                RecipeFormat.Range(n.Confirmed + n.NeededMin, n.Confirmed + n.NeededMax)));
         }
 
         foreach (var kv in n.ByCategory.OrderByDescending(kv => kv.Value))
         {
             string cat = Lang.Get("foodcategory-" + kv.Key.ToString().ToLowerInvariant());
-            sb.Append('\n').Append(Lang.Get("nutrition-facts-line-satiety", cat, Round(kv.Value)));
+            sb.Append('\n').Append(Lang.Get("nutrition-facts-line-satiety", cat, RecipeFormat.Round(kv.Value)));
         }
 
-        if (n.OptionalMax > 0) sb.Append('\n').Append(Lang.Get("cookui:sat-extras", Round(n.OptionalMax)));
+        if (n.OptionalMax > 0) sb.Append('\n').Append(Lang.Get("cookui:sat-extras", RecipeFormat.Round(n.OptionalMax)));
     }
 
     /// <summary>A bowl showing the meal, filled with the actual/expected ingredients like the handbook does.</summary>

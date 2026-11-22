@@ -8,38 +8,6 @@ using Vintagestory.API.MathTools;
 
 namespace CookUi;
 
-public enum SlotKind { Empty, Present, Required, Optional }
-
-/// <summary>One square in a recipe row: an item icon, a small amount label and a hover text.</summary>
-public sealed class SlotView
-{
-    public SlotKind Kind;
-    public ItemSlot? Slot;
-    public string? Tooltip;
-    /// <summary>Category names listed after <see cref="Tooltip"/>, matching <see cref="Cycle"/>; the shown one is gold.</summary>
-    public List<string>? Categories;
-    public string? Count;
-    /// <summary>Amount is wrong (uneven stack size); count is drawn in orange.</summary>
-    public bool Warn;
-    /// <summary>
-    /// The slot accepts any of these (one per ingredient kind); drawn as a 2×2 mosaic of small
-    /// icons instead of <see cref="Slot"/>, with "+N" in the last cell when there are more than 4.
-    /// </summary>
-    public List<SlotView>? Choices;
-    /// <summary>
-    /// The group accepts several kinds of item: the icon rotates through these (one per kind)
-    /// instead of always showing <see cref="Slot"/>.
-    /// </summary>
-    public List<ItemSlot>? Cycle;
-}
-
-public sealed class RowView
-{
-    public required SlotView Meal;
-    public required PredictionState State;
-    public required List<SlotView> Ingredients;
-}
-
 /// <summary>
 /// Draws rows of "[meal] | [ing] [ing] [ing] [ing]", mirroring the pot's slots.
 /// Ingredients still needed show as dark "shadow" icons, optional ones fainter still.
@@ -58,19 +26,20 @@ public class GuiElementRecipeRows : GuiElement
     private static readonly int RequiredColor = ColorUtil.ToRgba(170, 95, 95, 95);
     private static readonly int OptionalColor = ColorUtil.ToRgba(90, 70, 70, 70);
 
-    private readonly List<RowView> rows;
+    private readonly List<RecipeRow> rows;
     private readonly int slotCount;
     private readonly ElementBounds clipBounds;
     private readonly Dictionary<string, LoadedTexture> textCache = new();
     private readonly TooltipRenderer tooltip;
+    private readonly Dictionary<ItemStack, ItemSlot> slotCache = new(ReferenceEqualityComparer.Instance);
     private LoadedTexture? slotTex, readyTex, warnTex, sepTex;
-    private SlotView? hover;
+    private RecipeSlot? hover;
     /// <summary>Drives rotating icons; paused while the mouse is over a recipe row.</summary>
     private float cycleClock;
     private int cycleFrame;
 
     /// <param name="clipBounds">Visible (scrolled) area; slots outside it don't react to the mouse.</param>
-    public GuiElementRecipeRows(ICoreClientAPI capi, ElementBounds bounds, ElementBounds clipBounds, List<RowView> rows, int slotCount)
+    public GuiElementRecipeRows(ICoreClientAPI capi, ElementBounds bounds, ElementBounds clipBounds, List<RecipeRow> rows, int slotCount)
         : base(capi, bounds)
     {
         this.rows = rows;
@@ -167,7 +136,7 @@ public class GuiElementRecipeRows : GuiElement
 
             // Always render every slot; only remember the first tooltip under the mouse.
             // (Don't use `hover ??= RenderSlot(...)`: it skips rendering once hover is set.)
-            var t = RenderSlot(row.Meal, mealX, y, size, mx, my);
+            var t = RenderSlot(row.Result, mealX, y, size, mx, my);
             if (mouseInView) hover ??= t;
             for (int i = 0; i < slotCount; i++)
             {
@@ -204,7 +173,7 @@ public class GuiElementRecipeRows : GuiElement
         tooltip.Render(hover == null ? null : TooltipLines(hover), api.Input.MouseX, api.Input.MouseY);
     }
 
-    private List<TooltipLine> TooltipLines(SlotView view)
+    private List<TooltipLine> TooltipLines(RecipeSlot view)
     {
         var lines = new List<TooltipLine>();
         if (!string.IsNullOrEmpty(view.Tooltip)) lines.Add(new TooltipLine(view.Tooltip));
@@ -220,8 +189,14 @@ public class GuiElementRecipeRows : GuiElement
     }
 
     /// <summary>The icon to draw this frame: the current step of the rotation, or the fixed slot.</summary>
-    private ItemSlot? CurrentSlot(SlotView view) =>
-        view.Cycle is { Count: > 1 } cycle ? cycle[cycleFrame % cycle.Count] : view.Slot;
+    private ItemSlot? CurrentSlot(RecipeSlot view)
+    {
+        var stack = view.Cycle is { Count: > 1 } cycle ? cycle[cycleFrame % cycle.Count] : view.Icon;
+        if (stack == null) return null;
+        // The renderer wants slots; make one per stack once, not every frame.
+        if (!slotCache.TryGetValue(stack, out var slot)) slotCache[stack] = slot = new DummySlot(stack);
+        return slot;
+    }
 
     private void Blit(LoadedTexture? tex, double x, double y)
     {
@@ -230,7 +205,7 @@ public class GuiElementRecipeRows : GuiElement
     }
 
     /// <returns>The slot when the mouse is over it and it has a tooltip.</returns>
-    private SlotView? RenderSlot(SlotView view, double x, double y, double size, int mx, int my)
+    private RecipeSlot? RenderSlot(RecipeSlot view, double x, double y, double size, int mx, int my)
     {
         if (view.Choices is { Count: > 0 } choices)
         {
@@ -264,7 +239,7 @@ public class GuiElementRecipeRows : GuiElement
     }
 
     /// <summary>Up to four small icons in a 2×2 grid; with more choices the last cell says "+N".</summary>
-    private void RenderMosaic(SlotView view, List<SlotView> choices, double x, double y, double size)
+    private void RenderMosaic(RecipeSlot view, List<RecipeSlot> choices, double x, double y, double size)
     {
         int color = view.Kind == SlotKind.Required ? RequiredColor : OptionalColor;
         bool overflow = choices.Count > 4;

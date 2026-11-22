@@ -1,75 +1,45 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using System.Text;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
-using Vintagestory.GameContent;
 
 namespace CookUi;
 
-/// <summary>Non-generic handle so the mod system can keep every kind of window in one list.</summary>
-public abstract class RecipeWindow : HudElement
-{
-    protected RecipeWindow(ICoreClientAPI capi) : base(capi) { }
-
-    /// <summary>Called periodically by the mod system; shows, refreshes or hides the panel.</summary>
-    public abstract void Update();
-}
-
 /// <summary>
-/// Non-interactive panel that sits beside an open station dialog (firepit, mixing bowl...)
-/// and lists the recipes its contents can still become, one row per recipe: the result's icon,
-/// then the station's slots with the ingredients already in it and "shadows" of the ones
-/// still needed or allowed. Also adds show/auto-open buttons to the station's title bar.
-///
-/// To support a new station, derive from a recipe-family window (e.g.
-/// <see cref="CookingRecipeWindow{THost}"/>) and say which dialog it attaches to
-/// (<see cref="IsHost"/>) and what the station holds (<see cref="GetState"/>).
-/// To support a new kind of recipe, derive from this class and implement <see cref="BuildGrid"/>.
+/// Non-interactive panel that sits beside an open station dialog and lists the rows its recipe
+/// sources return for the station's contents. One per registered station. Also adds show and
+/// auto-open buttons to the station's title bar. Knows nothing about any particular recipe type.
 /// </summary>
-/// <typeparam name="THost">Dialog class the window attaches to.</typeparam>
-/// <typeparam name="TState">Station contents the window needs to build its rows.</typeparam>
-public abstract class RecipeWindow<THost, TState> : RecipeWindow
-    where THost : GuiDialog
-    where TState : StationState
+public sealed class RecipeWindow : HudElement
 {
     private const double GapPx = 6;
     private const int MaxVisibleRows = 6;
     private const double ScrollbarWidth = 20;
     private const double ScrollbarGap = 6;
 
-    protected readonly CookUiConfig Config;
+    private readonly ICookingStation station;
+    private readonly IReadOnlyList<IRecipeSource> sources;
+    private readonly CookUiConfig config;
 
-    private THost? target;
+    private GuiDialog? target;
     private string lastSignature = "";
     /// <summary>Host dialog the current show/hide choice belongs to; reset each time a station opens.</summary>
-    private THost? sessionDlg;
+    private GuiDialog? sessionDlg;
     /// <summary>Whether the player wants the panel shown for this station (starts as the auto-open setting).</summary>
     private bool panelWanted;
     private ElementBounds? rowsBounds;
 
-    protected RecipeWindow(ICoreClientAPI capi, CookUiConfig config) : base(capi)
+    /// <param name="sources">Live list: sources registered later are picked up on the next rebuild.</param>
+    public RecipeWindow(ICoreClientAPI capi, CookUiConfig config, ICookingStation station, IReadOnlyList<IRecipeSource> sources)
+        : base(capi)
     {
-        Config = config;
+        this.config = config;
+        this.station = station;
+        this.sources = sources;
     }
-
-    /// <summary>Unique short name; keys this window's composers (panel and title bar buttons).</summary>
-    public abstract string Id { get; }
-
-    /// <summary>Lang key of the panel title ("Pot recipes"...).</summary>
-    protected abstract string TitleLangKey { get; }
-
-    /// <summary>Whether <paramref name="dlg"/>, an open <typeparamref name="THost"/>, is this window's station.</summary>
-    protected virtual bool IsHost(THost dlg) => true;
-
-    /// <summary>The station's contents, or null when it can't use these recipes right now (no pot...).</summary>
-    protected abstract TState? GetState(THost host);
-
-    /// <summary>The rows to show for <paramref name="state"/>.</summary>
-    protected abstract RecipeGrid BuildGrid(TState state);
 
     public override bool Focusable => false;
     public override double DrawOrder => 0.21; // just above block entity dialogs (0.2)
@@ -77,35 +47,70 @@ public abstract class RecipeWindow<THost, TState> : RecipeWindow
     // panel don't fall through to the world.
     public override bool ShouldReceiveKeyboardEvents() => false;
 
-    public override void Update()
+    /// <summary>The open dialog of this station and its contents, if any.</summary>
+    private (GuiDialog? dlg, StationContents? contents) FindStation()
     {
-        var dlg = capi.Gui.OpenedGuis.OfType<THost>().FirstOrDefault(IsHost);
+        foreach (var dlg in capi.Gui.OpenedGuis)
+        {
+            StationContents? contents;
+            try { contents = station.GetContents(dlg); }
+            catch (Exception) { contents = null; }
+            if (contents != null) return (dlg, contents);
+        }
+        return (null, null);
+    }
+
+    /// <summary>Sources with something to say about <paramref name="contents"/>.</summary>
+    private List<IRecipeSource> Applicable(StationContents? contents)
+    {
+        var list = new List<IRecipeSource>();
+        if (contents == null) return list;
+        foreach (var source in sources)
+        {
+            try { if (source.AppliesTo(contents)) list.Add(source); }
+            catch (Exception e) { capi.Logger.Warning("[cookui] {0}.AppliesTo failed: {1}", source.GetType().Name, e.Message); }
+        }
+        return list;
+    }
+
+    private bool IsActive(GuiDialog dlg)
+    {
+        StationContents? contents;
+        try { contents = station.GetContents(dlg); }
+        catch (Exception) { return false; }
+        return Applicable(contents).Count > 0;
+    }
+
+    /// <summary>Called periodically by the mod system; shows, refreshes or hides the panel.</summary>
+    public void Update()
+    {
+        var (dlg, contents) = FindStation();
         if (dlg != sessionDlg)
         {
             sessionDlg = dlg;
-            panelWanted = Config.AutoOpen;
+            panelWanted = config.AutoOpen;
         }
 
         if (dlg != null)
         {
-            TitleBarButtons.AttachTo(capi, dlg, "cookui-buttons-" + Id, () => new TitleBarButtons(
-                capi, dlg, () => GetState(dlg) != null, IsOpened, () => Config.AutoOpen, TogglePanel, ToggleAutoOpen));
+            TitleBarButtons.AttachTo(capi, dlg, "cookui-buttons-" + station.Id, () => new TitleBarButtons(
+                capi, dlg, () => IsActive(dlg), IsOpened, () => config.AutoOpen, TogglePanel, ToggleAutoOpen));
         }
 
-        var state = dlg == null ? null : GetState(dlg);
         target = dlg;
-        if (state == null || !panelWanted)
+        var active = Applicable(contents);
+        if (contents == null || active.Count == 0 || !panelWanted)
         {
             lastSignature = "";
             if (IsOpened()) TryClose();
             return;
         }
 
-        string sig = Signature(state);
+        string sig = Signature(contents, active);
         if (sig != lastSignature || SingleComposer == null)
         {
             lastSignature = sig;
-            Compose(state);
+            Compose(contents, active);
         }
 
         if (!IsOpened()) TryOpen();
@@ -119,8 +124,8 @@ public abstract class RecipeWindow<THost, TState> : RecipeWindow
 
     private void ToggleAutoOpen()
     {
-        Config.AutoOpen = !Config.AutoOpen;
-        Config.Save(capi);
+        config.AutoOpen = !config.AutoOpen;
+        config.Save(capi);
     }
 
     // Only scroll when the mouse is over the panel, so the wheel still works elsewhere.
@@ -131,24 +136,50 @@ public abstract class RecipeWindow<THost, TState> : RecipeWindow
     }
 
     /// <summary>Changes whenever the rows would; the panel is only rebuilt when it does.</summary>
-    protected virtual string Signature(TState state)
+    private static string Signature(StationContents contents, List<IRecipeSource> active)
     {
         var sb = new StringBuilder();
         sb.Append(Lang.CurrentLocale).Append('|');
-        sb.Append(state.Container?.Collectible.Code).Append('|');
-        foreach (var slot in state.Slots)
+        sb.Append(contents.Container?.Collectible.Code).Append('|');
+        foreach (var slot in contents.Slots)
         {
             var s = slot.Itemstack;
             sb.Append(s == null ? "-" : s.Collectible.Code + "x" + s.StackSize).Append(';');
         }
+        foreach (var source in active) sb.Append('|').Append(source.GetType().FullName);
         return sb.ToString();
     }
 
-    private void Compose(TState state)
+    private (List<RecipeRow> rows, string note) BuildRows(StationContents contents, List<IRecipeSource> active)
     {
-        var grid = BuildGrid(state);
-        var rows = grid.Rows;
-        int slotCount = grid.SlotCount;
+        var rows = new List<RecipeRow>();
+        string? note = null;
+        foreach (var source in active)
+        {
+            try
+            {
+                rows.AddRange(source.GetRows(contents));
+                note ??= source.EmptyNote(contents);
+            }
+            catch (Exception e)
+            {
+                capi.Logger.Error("[cookui] {0} failed to build rows: {1}", source.GetType().Name, e);
+            }
+        }
+        // Several sources: keep each one's order, but list everything ready first.
+        if (active.Count > 1) rows = rows.OrderBy(r => RecipeFormat.Rank(r.State)).ToList();
+        note ??= Lang.Get(contents.Slots.All(s => s.Empty) ? "cookui:no-recipes" : "cookui:no-recipe-fits");
+        return (rows, note);
+    }
+
+    private void Compose(StationContents contents, List<IRecipeSource> active)
+    {
+        var (rows, note) = BuildRows(contents, active);
+        int slotCount = contents.Slots.Count;
+        foreach (var row in rows)
+        {
+            while (row.Ingredients.Count < slotCount) row.Ingredients.Add(RecipeSlot.Empty());
+        }
 
         double rowsWidth = GuiElementRecipeRows.WidthFor(slotCount);
         double totalHeight = GuiElementRecipeRows.HeightFor(rows.Count);
@@ -168,9 +199,9 @@ public abstract class RecipeWindow<THost, TState> : RecipeWindow
         dialogBounds.BothSizing = ElementSizing.FitToChildren;
 
         SingleComposer?.Dispose();
-        var composer = capi.Gui.CreateCompo("cookui-" + Id, dialogBounds)
+        var composer = capi.Gui.CreateCompo("cookui-" + station.Id, dialogBounds)
             .AddShadedDialogBG(bgBounds, true)
-            .AddDialogTitleBarWithBg(Lang.Get(TitleLangKey), OnCloseClicked, CairoFont.WhiteSmallText(), null, "titlebar")
+            .AddDialogTitleBarWithBg(station.Title, OnCloseClicked, CairoFont.WhiteSmallText(), null, "titlebar")
             .BeginChildElements(bgBounds);
 
         if (rows.Count > 0)
@@ -185,7 +216,7 @@ public abstract class RecipeWindow<THost, TState> : RecipeWindow
         {
             var noteBounds = ElementBounds.Fixed(0, 30, rowsWidth, 20);
             bgBounds.WithChildren(noteBounds);
-            composer.AddStaticText(grid.EmptyNote, CairoFont.WhiteDetailText().WithColor(new[] { 0.7, 0.7, 0.7, 1.0 }), noteBounds);
+            composer.AddStaticText(note, CairoFont.WhiteDetailText().WithColor(new[] { 0.7, 0.7, 0.7, 1.0 }), noteBounds);
         }
 
         SingleComposer = composer.EndChildElements().Compose();
@@ -251,46 +282,4 @@ public abstract class RecipeWindow<THost, TState> : RecipeWindow
         // After base: the EndClip element has popped the scissor, so the tooltip isn't cut off.
         (SingleComposer?.GetElement("rows") as GuiElementRecipeRows)?.RenderTooltip();
     }
-
-    // ---- Helpers shared by row builders ----
-
-    protected static ItemSlot Dummy(ItemStack stack) => new DummySlot(stack);
-
-    protected static bool IsLiquid(ItemStack stack) => BlockLiquidContainerBase.GetContainableProps(stack) != null;
-
-    /// <summary>"3" for items, "1.5L" for liquids.</summary>
-    protected static string? AmountLabel(ItemStack stack)
-    {
-        var props = BlockLiquidContainerBase.GetContainableProps(stack);
-        if (props != null && props.ItemsPerLitre > 0) return Litres(stack.StackSize / props.ItemsPerLitre);
-        return stack.StackSize.ToString();
-    }
-
-    /// <summary><paramref name="quantity"/> items of <paramref name="like"/>'s kind, as "3" or "1.5L".</summary>
-    protected static string AmountOf(ItemStack like, int quantity)
-    {
-        var s = like.Clone();
-        s.StackSize = quantity;
-        return AmountLabel(s) ?? quantity.ToString();
-    }
-
-    protected static string Litres(float l) => l.ToString("0.##", CultureInfo.CurrentCulture) + "L";
-
-    protected static string Round(float v) => Math.Round(v).ToString(CultureInfo.CurrentCulture);
-
-    protected static string Range(float min, float max) =>
-        Math.Round(min) == Math.Round(max) ? Round(min) : Round(min) + "–" + Round(max);
-
-    /// <summary>Non-empty stacks of <paramref name="slots"/>, in order.</summary>
-    protected static ItemStack[] Stacks(IEnumerable<ItemSlot> slots) =>
-        slots.Select(s => s.Itemstack).Where(s => s != null).Cast<ItemStack>().ToArray();
-
-    /// <summary>Status line of a recipe row's result tooltip.</summary>
-    protected static string StatusText(PredictionState state, int servings, int missing) => state switch
-    {
-        PredictionState.Ready => Lang.Get("cookui:servings", servings),
-        PredictionState.TooMuch => Lang.Get("cookui:too-much", servings),
-        PredictionState.RatioWrong => Lang.Get("cookui:ratio-wrong"),
-        _ => Lang.Get("cookui:needs-more", missing),
-    };
 }

@@ -9,58 +9,49 @@ using Vintagestory.GameContent;
 namespace CookUi.Compat.AculinaryArtillery;
 
 /// <summary>
-/// ACA saucepan or cauldron sitting in a firepit. These simmer: either a single ingredient
-/// that cooks on its own (its CombustibleProps), or an ACA simmer recipe, where every ingredient
-/// is required, takes one slot, and all of them come in the same multiple of the recipe amounts.
+/// ACA saucepan or cauldron in a firepit. These simmer: either a single ingredient that cooks
+/// on its own (its CombustibleProps), or an ACA simmer recipe, where every ingredient is required,
+/// takes one slot, and all of them come in the same multiple of the recipe amounts.
 /// </summary>
-public sealed class SaucepanWindow : RecipeWindow<GuiDialogBlockEntityFirepit, StationState>
+public sealed class SimmerRecipeSource : IRecipeSource
 {
-    private readonly IRecipeProvider<SimmerRecipeInfo> provider;
+    private readonly ICoreClientAPI capi;
+    private readonly AcaSimmerRecipes recipes;
     private IngredientIcons? icons;
 
-    public SaucepanWindow(ICoreClientAPI capi, CookUiConfig config) : base(capi, config)
+    public SimmerRecipeSource(ICoreClientAPI capi)
     {
-        provider = new AcaSimmerRecipeProvider(capi);
+        this.capi = capi;
+        recipes = new AcaSimmerRecipes(capi);
     }
-
-    public override string Id => "aca-saucepan";
-    protected override string TitleLangKey => "cookui:panel-title-simmer";
 
     private IngredientIcons Icons => icons ??= new IngredientIcons(capi.World);
 
-    protected override StationState? GetState(GuiDialogBlockEntityFirepit host)
-    {
-        if (host.Inventory is not InventorySmelting inv || !inv.HaveCookingContainer) return null;
-        var container = inv[1].Itemstack;
-        if (!Aca.IsA(container?.Collectible, Aca.SaucepanBlock)) return null;
-        return new StationState(container, inv.CookingSlots);
-    }
+    public bool AppliesTo(StationContents contents) => Aca.IsA(contents.Container?.Collectible, Aca.SaucepanBlock);
 
     private sealed record Prediction(
         string Code, ItemStack Output, PredictionState State, int Batches,
         CraftingRecipeIngredient[] Ingredients, int[] Assigned, int Missing);
 
-    protected override RecipeGrid BuildGrid(StationState state)
+    public IEnumerable<RecipeRow> GetRows(StationContents contents)
     {
-        var stacks = Stacks(state.Slots);
-        int slotCount = state.Slots.Count;
+        var stacks = RecipeFormat.Stacks(contents.Slots);
+        int slotCount = contents.Slots.Count;
 
         var predictions = new List<Prediction>();
         if (SingleIngredient(stacks) is { } single) predictions.Add(single);
-        foreach (var recipe in provider.GetRecipes())
+        foreach (var recipe in recipes.All())
         {
             var p = Analyze(recipe, stacks, slotCount);
             if (p != null) predictions.Add(p);
         }
 
-        var rows = predictions
+        return predictions
             .OrderBy(p => p.State == PredictionState.Missing ? 1 : 0)
             .ThenBy(p => p.Missing)
             .ThenBy(p => IngredientIcons.SafeName(p.Output), StringComparer.OrdinalIgnoreCase)
             .Select(p => BuildRow(p, stacks, slotCount))
             .ToList();
-        string note = Lang.Get(stacks.Length == 0 ? "cookui:no-recipes" : "cookui:no-recipe-fits");
-        return new RecipeGrid(slotCount, rows, note);
     }
 
     /// <summary>One stack that simmers by itself (mirrors BlockSaucepan.CanSmelt).</summary>
@@ -109,7 +100,7 @@ public sealed class SaucepanWindow : RecipeWindow<GuiDialogBlockEntityFirepit, S
         return new Prediction(recipe.Code, recipe.Output, state, batches, ings, assigned, 0);
     }
 
-    private RowView BuildRow(Prediction p, ItemStack[] stacks, int slotCount)
+    private RecipeRow BuildRow(Prediction p, ItemStack[] stacks, int slotCount)
     {
         // Batch count every ingredient has to match: known when ready, else the most common
         // whole multiple among what's already in.
@@ -126,7 +117,7 @@ public sealed class SaucepanWindow : RecipeWindow<GuiDialogBlockEntityFirepit, S
             if (multiples.Count > 0) batches = multiples.GroupBy(n => n).OrderByDescending(g => g.Count()).ThenBy(g => g.Key).First().Key;
         }
 
-        var slots = new List<SlotView>();
+        var slots = new List<RecipeSlot>();
         var present = new bool[p.Ingredients.Length];
 
         for (int i = 0; i < stacks.Length; i++)
@@ -139,14 +130,14 @@ public sealed class SaucepanWindow : RecipeWindow<GuiDialogBlockEntityFirepit, S
             {
                 present[j] = true;
                 var ing = p.Ingredients[j];
-                tooltip += "\n" + Lang.Get("cookui:simmer-per-batch", AmountOf(stack, ing.Quantity));
+                tooltip += "\n" + Lang.Get("cookui:simmer-per-batch", RecipeFormat.AmountOf(stack, ing.Quantity));
                 warn = batches != null && stack.StackSize != ing.Quantity * batches.Value;
             }
             else if (p.State == PredictionState.RatioWrong)
             {
                 warn = true; // single ingredient below one portion
             }
-            slots.Add(new SlotView { Kind = SlotKind.Present, Slot = Dummy(stack.Clone()), Tooltip = tooltip, Count = AmountLabel(stack), Warn = warn });
+            slots.Add(new RecipeSlot { Kind = SlotKind.Present, Icon = stack.Clone(), Tooltip = tooltip, Count = RecipeFormat.AmountLabel(stack), Warn = warn });
         }
 
         for (int j = 0; j < p.Ingredients.Length && slots.Count < slotCount; j++)
@@ -155,30 +146,30 @@ public sealed class SaucepanWindow : RecipeWindow<GuiDialogBlockEntityFirepit, S
             slots.Add(Ghost(p.Ingredients[j], batches));
         }
 
-        while (slots.Count < slotCount) slots.Add(new SlotView { Kind = SlotKind.Empty });
+        while (slots.Count < slotCount) slots.Add(RecipeSlot.Empty());
 
-        return new RowView { Meal = ResultSlot(p), State = p.State, Ingredients = slots };
+        return new RecipeRow { Result = ResultSlot(p), State = p.State, Ingredients = slots };
     }
 
-    private SlotView Ghost(CraftingRecipeIngredient ing, int? batches)
+    private RecipeSlot Ghost(CraftingRecipeIngredient ing, int? batches)
     {
         var info = Icons.Get(ing);
         var sample = info.Icon ?? ing.ResolvedItemStack;
-        string perBatch = sample == null ? ing.Quantity.ToString() : AmountOf(sample, ing.Quantity);
+        string perBatch = sample == null ? ing.Quantity.ToString() : RecipeFormat.AmountOf(sample, ing.Quantity);
         bool rotates = info.Categories.Count > 1;
         string tooltip = Lang.Get("cookui:slot-needed", info.Label) + "\n" + Lang.Get("cookui:simmer-per-batch", perBatch);
-        return new SlotView
+        return new RecipeSlot
         {
             Kind = SlotKind.Required,
-            Slot = info.Icon == null ? null : Dummy(info.Icon.Clone()),
-            Cycle = rotates ? info.Categories.Select(c => Dummy(c.Icon.Clone())).ToList() : null,
+            Icon = info.Icon?.Clone(),
+            Cycle = rotates ? info.Categories.Select(c => c.Icon.Clone()).ToList() : null,
             Categories = rotates ? info.Categories.Select(c => c.Name).ToList() : null,
             Tooltip = tooltip,
-            Count = sample == null || batches == null ? null : AmountOf(sample, ing.Quantity * batches.Value),
+            Count = sample == null || batches == null ? null : RecipeFormat.AmountOf(sample, ing.Quantity * batches.Value),
         };
     }
 
-    private SlotView ResultSlot(Prediction p)
+    private RecipeSlot ResultSlot(Prediction p)
     {
         var icon = p.Output.Clone();
         icon.StackSize = 1;
@@ -191,7 +182,7 @@ public sealed class SaucepanWindow : RecipeWindow<GuiDialogBlockEntityFirepit, S
             case PredictionState.Ready:
                 var total = p.Output.Clone();
                 total.StackSize = p.Output.StackSize * p.Batches;
-                count = AmountLabel(total);
+                count = RecipeFormat.AmountLabel(total);
                 status = Lang.Get("cookui:simmer-makes", count);
                 break;
             case PredictionState.RatioWrong:
@@ -202,10 +193,10 @@ public sealed class SaucepanWindow : RecipeWindow<GuiDialogBlockEntityFirepit, S
                 break;
         }
 
-        return new SlotView
+        return new RecipeSlot
         {
             Kind = SlotKind.Present,
-            Slot = Dummy(icon),
+            Icon = icon,
             Tooltip = name + "\n" + status,
             Count = count,
         };
