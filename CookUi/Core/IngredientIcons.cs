@@ -47,17 +47,22 @@ public class IngredientIcons
     };
 
     private readonly IWorldAccessor world;
-    private readonly Dictionary<CookingRecipeIngredient, IngredientInfo> cache = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<CookingRecipeIngredient, List<ItemStack>> stacksCache = new(ReferenceEqualityComparer.Instance);
+    // Keyed by ingredient object (CookingRecipeIngredient or CraftingRecipeIngredient).
+    private readonly Dictionary<object, IngredientInfo> cache = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<object, List<ItemStack>> stacksCache = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<CookingRecipeIngredient, (float min, float max)?> satietyCache = new(ReferenceEqualityComparer.Instance);
 
     public IngredientIcons(IWorldAccessor world) => this.world = world;
 
-    public IngredientInfo Get(CookingRecipeIngredient ing)
-    {
-        if (cache.TryGetValue(ing, out var info)) return info;
+    public IngredientInfo Get(CookingRecipeIngredient ing) => Get(ing, Stacks(ing), ing.TypeName);
 
-        var stacks = Stacks(ing);
+    /// <summary>Same for a generic recipe ingredient (simmering, kneading... recipes).</summary>
+    public IngredientInfo Get(CraftingRecipeIngredient ing) => Get(ing, Stacks(ing), ing.Name);
+
+    private IngredientInfo Get(object key, List<ItemStack> stacks, string? typeName)
+    {
+        if (cache.TryGetValue(key, out var info)) return info;
+
         ItemStack? icon = PickRepresentative(stacks);
         var categories = Categories(stacks);
 
@@ -73,14 +78,22 @@ public class IngredientIcons
             }
         }
 
-        string label = stacks.Count == 1
-            ? SafeName(stacks[0])
-            : Capitalize(Lang.GetIfExists("handbook-mealingredient-" + ing.TypeName)
-                         ?? Lang.GetIfExists("foodcategory-" + ing.TypeName)
-                         ?? ing.TypeName);
+        string label;
+        if (stacks.Count == 1 || string.IsNullOrEmpty(typeName))
+        {
+            label = icon == null ? "?" : SafeName(icon);
+            if (stacks.Count > 1) label += " (+" + (stacks.Count - 1) + ")";
+        }
+        else
+        {
+            label = Capitalize(Lang.GetIfExists("handbook-mealingredient-" + typeName)
+                               ?? Lang.GetIfExists("foodcategory-" + typeName)
+                               ?? Lang.GetIfExists("cookui:family-" + typeName)
+                               ?? typeName);
+        }
 
         info = new IngredientInfo { Icon = icon, Label = label, Categories = categories };
-        cache[ing] = info;
+        cache[key] = info;
         return info;
     }
 
@@ -110,6 +123,37 @@ public class IngredientIcons
                 s.StackSize = 1;
                 list.Add(s);
             }
+        }
+
+        stacksCache[ing] = list;
+        return list;
+    }
+
+    /// <summary>All concrete stacks a generic recipe ingredient accepts, wildcards expanded (variant filters respected).</summary>
+    public List<ItemStack> Stacks(CraftingRecipeIngredient ing)
+    {
+        if (stacksCache.TryGetValue(ing, out var list)) return list;
+        list = new List<ItemStack>();
+
+        if (ing.MatchingType != EnumRecipeMatchType.Exact)
+        {
+            // Wildcards, regexes, tags...: let the ingredient judge every collectible (cached).
+            var seen = new HashSet<AssetLocation>();
+            foreach (var c in world.Collectibles)
+            {
+                if (c?.Code == null) continue;
+                var stack = new ItemStack(c);
+                bool ok;
+                try { ok = ing.SatisfiesAsIngredient(stack, false); }
+                catch (Exception) { ok = false; }
+                if (ok && seen.Add(c.Code)) list.Add(stack);
+            }
+        }
+        else if (ing.ResolvedItemStack is { } rs)
+        {
+            var s = rs.Clone();
+            s.StackSize = 1;
+            list.Add(s);
         }
 
         stacksCache[ing] = list;
