@@ -50,6 +50,7 @@ public class IngredientIcons
     // Keyed by ingredient object (CookingRecipeIngredient or CraftingRecipeIngredient).
     private readonly Dictionary<object, IngredientInfo> cache = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<object, List<ItemStack>> stacksCache = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<string, List<ItemStack>> wildcardCache = new();
     private readonly Dictionary<CookingRecipeIngredient, (float min, float max)?> satietyCache = new(ReferenceEqualityComparer.Instance);
 
     public IngredientIcons(IWorldAccessor world) => this.world = world;
@@ -133,11 +134,24 @@ public class IngredientIcons
     public List<ItemStack> Stacks(CraftingRecipeIngredient ing)
     {
         if (stacksCache.TryGetValue(ing, out var list)) return list;
+
+        // Mod recipes repeat the same wildcard across hundreds of recipe objects (ACA's 1000+
+        // kneading recipes); share the expensive scan between equal ingredients.
+        // (Tag conditions are left out: those ingredients just get their own scan.)
+        string? valueKey = ing.MatchingType == EnumRecipeMatchType.Exact || !ing.Tags.IsEmpty ? null : string.Join("|",
+            ing.Type, ing.MatchingType, ing.Code,
+            ing.AllowedVariants == null ? "" : string.Join(",", ing.AllowedVariants),
+            ing.SkipVariants == null ? "" : string.Join(",", ing.SkipVariants));
+        if (valueKey != null && wildcardCache.TryGetValue(valueKey, out list))
+        {
+            stacksCache[ing] = list;
+            return list;
+        }
         list = new List<ItemStack>();
 
         if (ing.MatchingType != EnumRecipeMatchType.Exact)
         {
-            // Wildcards, regexes, tags...: let the ingredient judge every collectible (cached).
+            // Wildcards, regexes, tags...: let the ingredient judge every collectible.
             var seen = new HashSet<AssetLocation>();
             foreach (var c in world.Collectibles)
             {
@@ -157,6 +171,7 @@ public class IngredientIcons
         }
 
         stacksCache[ing] = list;
+        if (valueKey != null) wildcardCache[valueKey] = list;
         return list;
     }
 
