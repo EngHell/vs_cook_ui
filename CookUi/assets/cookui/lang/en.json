@@ -26,6 +26,12 @@
     "simmer-makes": "Makes {0}",
     "simmer-ratio": "Wrong amounts: every ingredient must be the same multiple of its recipe amount",
     "simmer-per-batch": "{0} per batch",
+    "panel-title-kneading": "Kneading recipes",
+    "knead-add-ingredient": "Add an ingredient to see what it can make",
+    "knead-per-mix": "{0} per mix",
+    "knead-ready": "Makes {0} per mix; enough for {1} mix(es)",
+    "knead-short": "Not enough of some ingredients (orange amounts)",
+    "slot-needed-any": "Needed, any of:",
 
     "recipe-meatystew": "Meat stew",
     "recipe-vegetablestew": "Vegetable stew",

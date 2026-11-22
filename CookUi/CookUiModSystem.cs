@@ -26,6 +26,7 @@ public class CookUiModSystem : ModSystem
         if (api.ModLoader.IsModEnabled(Aca.ModId))
         {
             windows.Add(new MixingBowlWindow(api, config));
+            windows.Add(new KneadingWindow(api, config));
             windows.Add(new SaucepanWindow(api, config));
         }
 

@@ -56,7 +56,7 @@ public sealed class SaucepanWindow : RecipeWindow<GuiDialogBlockEntityFirepit, S
         var rows = predictions
             .OrderBy(p => p.State == PredictionState.Missing ? 1 : 0)
             .ThenBy(p => p.Missing)
-            .ThenBy(p => p.Code, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(p => IngredientIcons.SafeName(p.Output), StringComparer.OrdinalIgnoreCase)
             .Select(p => BuildRow(p, stacks, slotCount))
             .ToList();
         string note = Lang.Get(stacks.Length == 0 ? "cookui:no-recipes" : "cookui:no-recipe-fits");
@@ -139,7 +139,7 @@ public sealed class SaucepanWindow : RecipeWindow<GuiDialogBlockEntityFirepit, S
             {
                 present[j] = true;
                 var ing = p.Ingredients[j];
-                tooltip += "\n" + Lang.Get("cookui:simmer-per-batch", Amount(stack, ing.Quantity));
+                tooltip += "\n" + Lang.Get("cookui:simmer-per-batch", AmountOf(stack, ing.Quantity));
                 warn = batches != null && stack.StackSize != ing.Quantity * batches.Value;
             }
             else if (p.State == PredictionState.RatioWrong)
@@ -164,7 +164,7 @@ public sealed class SaucepanWindow : RecipeWindow<GuiDialogBlockEntityFirepit, S
     {
         var info = Icons.Get(ing);
         var sample = info.Icon ?? ing.ResolvedItemStack;
-        string perBatch = sample == null ? ing.Quantity.ToString() : Amount(sample, ing.Quantity);
+        string perBatch = sample == null ? ing.Quantity.ToString() : AmountOf(sample, ing.Quantity);
         bool rotates = info.Categories.Count > 1;
         string tooltip = Lang.Get("cookui:slot-needed", info.Label) + "\n" + Lang.Get("cookui:simmer-per-batch", perBatch);
         return new SlotView
@@ -174,7 +174,7 @@ public sealed class SaucepanWindow : RecipeWindow<GuiDialogBlockEntityFirepit, S
             Cycle = rotates ? info.Categories.Select(c => Dummy(c.Icon.Clone())).ToList() : null,
             Categories = rotates ? info.Categories.Select(c => c.Name).ToList() : null,
             Tooltip = tooltip,
-            Count = sample == null || batches == null ? null : Amount(sample, ing.Quantity * batches.Value),
+            Count = sample == null || batches == null ? null : AmountOf(sample, ing.Quantity * batches.Value),
         };
     }
 
@@ -209,13 +209,5 @@ public sealed class SaucepanWindow : RecipeWindow<GuiDialogBlockEntityFirepit, S
             Tooltip = name + "\n" + status,
             Count = count,
         };
-    }
-
-    /// <summary><paramref name="quantity"/> items of <paramref name="like"/>'s kind, as "3" or "1.5L".</summary>
-    private static string Amount(ItemStack like, int quantity)
-    {
-        var s = like.Clone();
-        s.StackSize = quantity;
-        return AmountLabel(s) ?? quantity.ToString();
     }
 }

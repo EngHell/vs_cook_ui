@@ -266,6 +266,14 @@ public abstract class RecipeWindow<THost, TState> : RecipeWindow
         return stack.StackSize.ToString();
     }
 
+    /// <summary><paramref name="quantity"/> items of <paramref name="like"/>'s kind, as "3" or "1.5L".</summary>
+    protected static string AmountOf(ItemStack like, int quantity)
+    {
+        var s = like.Clone();
+        s.StackSize = quantity;
+        return AmountLabel(s) ?? quantity.ToString();
+    }
+
     protected static string Litres(float l) => l.ToString("0.##", CultureInfo.CurrentCulture) + "L";
 
     protected static string Round(float v) => Math.Round(v).ToString(CultureInfo.CurrentCulture);

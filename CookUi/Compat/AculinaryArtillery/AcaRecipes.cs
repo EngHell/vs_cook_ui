@@ -121,3 +121,76 @@ public sealed class AcaSimmerRecipeProvider : IRecipeProvider<SimmerRecipeInfo>
         }
     }
 }
+
+/// <summary>Our view of one ACA kneading (dough) recipe, made in a mixing bowl without a pot.</summary>
+public sealed class KneadingRecipeInfo
+{
+    /// <summary>
+    /// One entry per ingredient group; each group takes exactly one slot and accepts any one of
+    /// its inputs, at least that input's Quantity.
+    /// </summary>
+    public required CraftingRecipeIngredient[][] Groups;
+    /// <summary>What one mixing cycle makes.</summary>
+    public required ItemStack Output;
+    /// <summary>ACA's own check (DoughRecipe.Matches) against the bowl's ingredient slots.</summary>
+    public required System.Func<IWorldAccessor, ItemSlot[], bool> Matches;
+}
+
+/// <summary>ACA kneading recipes, wrapped once per recipe object.</summary>
+public sealed class AcaKneadingRecipeProvider : IRecipeProvider<KneadingRecipeInfo>
+{
+    private readonly ICoreClientAPI capi;
+    private readonly ConditionalWeakTable<object, KneadingRecipeInfo?> wrapped = new();
+
+    public AcaKneadingRecipeProvider(ICoreClientAPI capi) => this.capi = capi;
+
+    public IEnumerable<KneadingRecipeInfo> GetRecipes()
+    {
+        var list = Aca.RegistryList(capi, "DoughRecipes");
+        if (list == null) yield break;
+        foreach (var recipe in list)
+        {
+            if (recipe == null) continue;
+            var info = wrapped.GetValue(recipe, Wrap);
+            if (info != null) yield return info;
+        }
+    }
+
+    private static KneadingRecipeInfo? Wrap(object recipe)
+    {
+        try
+        {
+            var t = recipe.GetType();
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
+            if (t.GetProperty("Enabled", flags)?.GetValue(recipe) is false) return null;
+            if (t.GetField("Output", flags)?.GetValue(recipe) is not JsonItemStack { ResolvedItemstack: { } output }) return null;
+            if (t.GetField("Ingredients", flags)?.GetValue(recipe) is not Array ingredients || ingredients.Length == 0) return null;
+
+            var groups = new CraftingRecipeIngredient[ingredients.Length][];
+            for (int i = 0; i < ingredients.Length; i++)
+            {
+                var group = ingredients.GetValue(i);
+                if (group?.GetType().GetField("Inputs", flags)?.GetValue(group) is not CraftingRecipeIngredient[] inputs || inputs.Length == 0) return null;
+                groups[i] = inputs;
+            }
+
+            var matches = t.GetMethod("Matches", flags, new[] { typeof(IWorldAccessor), typeof(ItemSlot[]) });
+            if (matches == null) return null;
+
+            return new KneadingRecipeInfo
+            {
+                Groups = groups,
+                Output = output,
+                Matches = (world, slots) =>
+                {
+                    try { return matches.Invoke(recipe, new object[] { world, slots }) is true; }
+                    catch (Exception) { return false; }
+                },
+            };
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+}

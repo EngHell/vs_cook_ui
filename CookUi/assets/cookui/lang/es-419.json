@@ -26,6 +26,12 @@
     "simmer-makes": "Produce {0}",
     "simmer-ratio": "Cantidades incorrectas: cada ingrediente debe ser el mismo múltiplo de su cantidad en la receta",
     "simmer-per-batch": "{0} por tanda",
+    "panel-title-kneading": "Recetas de amasado",
+    "knead-add-ingredient": "Agrega un ingrediente para ver qué se puede hacer",
+    "knead-per-mix": "{0} por mezcla",
+    "knead-ready": "Produce {0} por mezcla; alcanza para {1} mezcla(s)",
+    "knead-short": "Falta cantidad de algunos ingredientes (cantidades en naranja)",
+    "slot-needed-any": "Necesario, cualquiera de:",
 
     "recipe-meatystew": "Estofado de carne",
     "recipe-vegetablestew": "Estofado de verduras",
