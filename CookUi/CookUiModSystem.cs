@@ -1,11 +1,13 @@
 ﻿using System.Collections.Generic;
+using CookUi.Compat.AculinaryArtillery;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 
 namespace CookUi;
 
 /// <summary>
-/// Client-only mod: shows which recipes an open cooking station (firepit pot...) can make.
+/// Client-only mod: shows which recipes an open cooking station (firepit pot, and with
+/// A Culinary Artillery its mixing bowl and saucepans) can make.
 /// </summary>
 public class CookUiModSystem : ModSystem
 {
@@ -21,6 +23,11 @@ public class CookUiModSystem : ModSystem
         var config = CookUiConfig.Load(api);
 
         windows.Add(new FirepitPotWindow(api, config));
+        if (api.ModLoader.IsModEnabled(Aca.ModId))
+        {
+            windows.Add(new MixingBowlWindow(api, config));
+            windows.Add(new SaucepanWindow(api, config));
+        }
 
         // Cheap poll: finds open station dialogs and refreshes only when contents change.
         tickListenerId = api.Event.RegisterGameTickListener(_ =>

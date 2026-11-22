@@ -21,6 +21,11 @@
     "btn-auto-off": "Auto-open: off\n(click to turn on)",
     "no-recipes": "No known recipes here",
     "no-recipe-fits": "No recipe matches these ingredients",
+    "panel-title-mixing": "Mixing recipes",
+    "panel-title-simmer": "Simmering recipes",
+    "simmer-makes": "Makes {0}",
+    "simmer-ratio": "Wrong amounts: every ingredient must be the same multiple of its recipe amount",
+    "simmer-per-batch": "{0} per batch",
 
     "recipe-meatystew": "Meat stew",
     "recipe-vegetablestew": "Vegetable stew",

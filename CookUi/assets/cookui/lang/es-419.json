@@ -21,6 +21,11 @@
     "btn-auto-off": "Abrir automáticamente: no\n(clic para activar)",
     "no-recipes": "No hay recetas conocidas aquí",
     "no-recipe-fits": "Ninguna receta coincide con estos ingredientes",
+    "panel-title-mixing": "Recetas del tazón",
+    "panel-title-simmer": "Recetas a fuego lento",
+    "simmer-makes": "Produce {0}",
+    "simmer-ratio": "Cantidades incorrectas: cada ingrediente debe ser el mismo múltiplo de su cantidad en la receta",
+    "simmer-per-batch": "{0} por tanda",
 
     "recipe-meatystew": "Estofado de carne",
     "recipe-vegetablestew": "Estofado de verduras",
