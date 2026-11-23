@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
-using Vintagestory.API.Config;
 using Vintagestory.GameContent;
 
 namespace CookUi.Compat.AculinaryArtillery;
@@ -18,7 +17,7 @@ public sealed class KneadingRecipeSource : IRecipeSource
 {
     private readonly ICoreClientAPI capi;
     private readonly AcaKneadingRecipes recipes;
-    private IngredientIcons? icons;
+    private IngredientResolver? resolver;
 
     public KneadingRecipeSource(ICoreClientAPI capi)
     {
@@ -26,39 +25,25 @@ public sealed class KneadingRecipeSource : IRecipeSource
         recipes = new AcaKneadingRecipes(capi);
     }
 
-    private IngredientIcons Icons => icons ??= new IngredientIcons(capi.World);
+    private IngredientResolver Resolver => resolver ??= new IngredientResolver(capi.World);
 
     // With a pot in, the bowl mixes meals instead.
     public bool AppliesTo(StationContents contents) => contents.Container?.Collectible is not BlockCookingContainer;
 
-    // Over a thousand recipes: listing them all for an empty bowl isn't useful.
-    public string? EmptyNote(StationContents contents) =>
-        contents.Slots.All(s => s.Empty) ? Lang.Get("cookui:knead-add-ingredient") : null;
-
-    /// <param name="InputOf">For each stack in the bowl, the group input it counts as.</param>
-    /// <param name="GroupOf">For each stack in the bowl, the recipe group it fills.</param>
-    /// <param name="Mixes">Cycles the current contents last for (when ready).</param>
-    private sealed record Prediction(
-        KneadingRecipeInfo Recipe, string Name, PredictionState State, int Missing,
-        int[] GroupOf, CraftingRecipeIngredient[] InputOf, int Mixes);
-
-    public IEnumerable<RecipeRow> GetRows(StationContents contents)
+    public IReadOnlyList<RecipeMatch> FindMatches(StationContents contents)
     {
         var slotArray = contents.Slots.ToArray();
         var stacks = RecipeFormat.Stacks(slotArray);
-        if (stacks.Length == 0) return Enumerable.Empty<RecipeRow>();
+        // Over a thousand recipes: an empty bowl matches them all, which tells the player nothing.
+        if (stacks.Length == 0) return Array.Empty<RecipeMatch>();
 
         return recipes.All()
             .Select(r => Analyze(r, stacks, slotArray))
-            .Where(p => p != null).Cast<Prediction>()
-            .OrderBy(p => RecipeFormat.Rank(p.State))
-            .ThenBy(p => p.Missing)
-            .ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(p => BuildRow(p, stacks, slotArray.Length))
+            .Where(m => m != null).Cast<RecipeMatch>()
             .ToList();
     }
 
-    private Prediction? Analyze(KneadingRecipeInfo recipe, ItemStack[] stacks, ItemSlot[] slots)
+    private RecipeMatch? Analyze(KneadingRecipeInfo recipe, ItemStack[] stacks, ItemSlot[] slots)
     {
         var groups = recipe.Groups;
         int n = groups.Length, m = stacks.Length;
@@ -77,27 +62,60 @@ public sealed class KneadingRecipeSource : IRecipeSource
         {
             if (!Assign(s, accepts, stackOf, new bool[n])) return null; // something doesn't belong
         }
-        var groupOf = new int[m];
+
+        var result = new List<IngredientSlot>();
+        var groupFilled = new bool[n];
+        int mixes = int.MaxValue;
         for (int g = 0; g < n; g++)
         {
-            if (stackOf[g] >= 0) groupOf[stackOf[g]] = g;
+            int s = stackOf[g];
+            if (s < 0) continue;
+            groupFilled[g] = true;
+            var input = accepts[s, g]!;
+            if (input.Quantity > 0) mixes = Math.Min(mixes, stacks[s].StackSize / input.Quantity);
         }
-        var inputOf = Enumerable.Range(0, m).Select(s => accepts[s, groupOf[s]]!).ToArray();
-
-        string name = IngredientIcons.SafeName(recipe.Output);
-        int missing = n - m;
-        if (missing > 0) return new Prediction(recipe, name, PredictionState.Missing, missing, groupOf, inputOf, 0);
-
-        if (!recipe.Matches(capi.World, slots))
+        // Filled slots in the bowl's order.
+        for (int s = 0; s < m; s++)
         {
-            // Every group is filled, so ACA refused over amounts: some slot is below its input's amount.
-            return new Prediction(recipe, name, PredictionState.RatioWrong, 0, groupOf, inputOf, 0);
+            int g = Array.IndexOf(stackOf, s);
+            var input = accepts[s, g]!;
+            result.Add(new IngredientSlot
+            {
+                Role = SlotRole.Filled,
+                Stack = stacks[s].Clone(),
+                AmountPerBatch = input.Quantity,
+                AmountWrong = stacks[s].StackSize < input.Quantity,
+            });
+        }
+        for (int g = 0; g < n; g++)
+        {
+            if (groupFilled[g]) continue;
+            result.Add(new IngredientSlot
+            {
+                Role = SlotRole.Required,
+                Options = groups[g].Select(input => new IngredientOption
+                {
+                    Accepts = Resolver.Stacks(input),
+                    TypeCode = input.Name,
+                    Amount = input.Quantity,
+                }).Where(o => o.Accepts.Count > 0).ToList(),
+            });
         }
 
-        int mixes = Enumerable.Range(0, m)
-            .Select(s => inputOf[s].Quantity > 0 ? stacks[s].StackSize / inputOf[s].Quantity : int.MaxValue)
-            .Min();
-        return new Prediction(recipe, name, PredictionState.Ready, 0, groupOf, inputOf, Math.Max(1, mixes));
+        MatchState state;
+        if (n > m) state = MatchState.Missing;
+        // Every group is filled; ACA's own check decides, and refuses only over amounts.
+        else state = recipe.Matches(capi.World, slots) ? MatchState.Ready : MatchState.WrongAmounts;
+
+        return new RecipeMatch
+        {
+            Output = recipe.Output,
+            State = state,
+            Slots = result,
+            AmountRule = AmountRule.AtLeast,
+            Makes = recipe.Output.StackSize,
+            Batches = state == MatchState.Ready && mixes != int.MaxValue ? Math.Max(1, mixes) : 0,
+        };
     }
 
     /// <summary>The group input <paramref name="stack"/> counts as, preferring one it has enough of.</summary>
@@ -129,109 +147,5 @@ public sealed class KneadingRecipeSource : IRecipeSource
             }
         }
         return false;
-    }
-
-    private RecipeRow BuildRow(Prediction p, ItemStack[] stacks, int slotCount)
-    {
-        var slots = new List<RecipeSlot>();
-        var filled = new bool[p.Recipe.Groups.Length];
-
-        for (int s = 0; s < stacks.Length; s++)
-        {
-            var stack = stacks[s];
-            var input = p.InputOf[s];
-            filled[p.GroupOf[s]] = true;
-            string tooltip = IngredientIcons.SafeName(stack) + "\n" + Lang.Get("cookui:knead-per-mix", RecipeFormat.AmountOf(stack, input.Quantity));
-            slots.Add(new RecipeSlot
-            {
-                Kind = SlotKind.Present,
-                Icon = stack.Clone(),
-                Tooltip = tooltip,
-                Count = RecipeFormat.AmountLabel(stack),
-                Warn = stack.StackSize < input.Quantity,
-            });
-        }
-
-        for (int g = 0; g < filled.Length && slots.Count < slotCount; g++)
-        {
-            if (!filled[g]) slots.Add(Ghost(p.Recipe.Groups[g]));
-        }
-
-        while (slots.Count < slotCount) slots.Add(RecipeSlot.Empty());
-
-        return new RecipeRow { Result = ResultSlot(p), State = p.State, Ingredients = slots };
-    }
-
-    /// <summary>A missing group: its one input, or a slot rotating through all the inputs it accepts.</summary>
-    private RecipeSlot Ghost(CraftingRecipeIngredient[] group)
-    {
-        if (group.Length == 1)
-        {
-            var ing = group[0];
-            var info = Icons.Get(ing);
-            string amount = InputAmount(ing, info);
-            bool rotates = info.Categories.Count > 1;
-            return new RecipeSlot
-            {
-                Kind = SlotKind.Required,
-                Icon = info.Icon?.Clone(),
-                Cycle = rotates ? info.Categories.Select(c => c.Icon.Clone()).ToList() : null,
-                Categories = rotates ? info.Categories.Select(c => c.Name).ToList() : null,
-                Tooltip = Lang.Get("cookui:slot-needed", info.Label) + "\n" + Lang.Get("cookui:knead-per-mix", amount),
-                Count = amount,
-            };
-        }
-
-        // Several inputs: rotate through one icon per input, each listed with its own amount.
-        var icons = new List<ItemStack>();
-        var labels = new List<string>();
-        var amounts = new HashSet<string>();
-        foreach (var ing in group)
-        {
-            var info = Icons.Get(ing);
-            if (info.Icon == null) continue;
-            string amount = InputAmount(ing, info);
-            amounts.Add(amount);
-            icons.Add(info.Icon.Clone());
-            labels.Add(info.Label + " (" + amount + ")");
-        }
-
-        return new RecipeSlot
-        {
-            Kind = SlotKind.Required,
-            Icon = icons.FirstOrDefault(),
-            Cycle = icons.Count > 1 ? icons : null,
-            Categories = labels.Count > 1 ? labels : null,
-            Tooltip = labels.Count > 1 ? Lang.Get("cookui:slot-needed-any") : labels.Count == 1 ? Lang.Get("cookui:slot-needed", labels[0]) : null,
-            Count = amounts.Count == 1 ? amounts.First() : null,
-        };
-    }
-
-    private static string InputAmount(CraftingRecipeIngredient ing, IngredientInfo info)
-    {
-        var sample = info.Icon ?? ing.ResolvedItemStack;
-        return sample == null ? ing.Quantity.ToString() : RecipeFormat.AmountOf(sample, ing.Quantity);
-    }
-
-    private RecipeSlot ResultSlot(Prediction p)
-    {
-        var icon = p.Recipe.Output.Clone();
-        string perMix = RecipeFormat.AmountLabel(icon) ?? icon.StackSize.ToString();
-        icon.StackSize = 1;
-
-        string status = p.State switch
-        {
-            PredictionState.Ready => Lang.Get("cookui:knead-ready", perMix, p.Mixes),
-            PredictionState.RatioWrong => Lang.Get("cookui:knead-short"),
-            _ => Lang.Get("cookui:needs-more", p.Missing),
-        };
-
-        return new RecipeSlot
-        {
-            Kind = SlotKind.Present,
-            Icon = icon,
-            Tooltip = p.Name + "\n" + status,
-            Count = p.State == PredictionState.Ready ? perMix : null,
-        };
     }
 }

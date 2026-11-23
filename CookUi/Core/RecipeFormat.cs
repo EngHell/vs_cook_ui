@@ -3,13 +3,12 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using Vintagestory.API.Common;
-using Vintagestory.API.Config;
 using Vintagestory.GameContent;
 
 namespace CookUi;
 
-/// <summary>Formatting helpers for recipe sources, so every station's rows read the same.</summary>
-public static class RecipeFormat
+/// <summary>Amount and number formatting for the panel.</summary>
+internal static class RecipeFormat
 {
     public static bool IsLiquid(ItemStack stack) => BlockLiquidContainerBase.GetContainableProps(stack) != null;
 
@@ -39,21 +38,4 @@ public static class RecipeFormat
     /// <summary>Non-empty stacks of <paramref name="slots"/>, in order.</summary>
     public static ItemStack[] Stacks(IEnumerable<ItemSlot> slots) =>
         slots.Select(s => s.Itemstack).Where(s => s != null).Cast<ItemStack>().ToArray();
-
-    /// <summary>Status line for a result tooltip, in servings.</summary>
-    public static string Status(PredictionState state, int servings, int missing) => state switch
-    {
-        PredictionState.Ready => Lang.Get("cookui:servings", servings),
-        PredictionState.TooMuch => Lang.Get("cookui:too-much", servings),
-        PredictionState.RatioWrong => Lang.Get("cookui:ratio-wrong"),
-        _ => Lang.Get("cookui:needs-more", missing),
-    };
-
-    /// <summary>Ready first, then wrong amounts, then by how much is missing (stable for equal keys).</summary>
-    public static int Rank(PredictionState state) => state switch
-    {
-        PredictionState.Ready => 0,
-        PredictionState.TooMuch or PredictionState.RatioWrong => 1,
-        _ => 2,
-    };
 }

@@ -9,11 +9,12 @@ using Vintagestory.API.Config;
 namespace CookUi;
 
 /// <summary>
-/// Non-interactive panel that sits beside an open station dialog and lists the rows its recipe
-/// sources return for the station's contents. One per registered station. Also adds show and
-/// auto-open buttons to the station's title bar. Knows nothing about any particular recipe type.
+/// Non-interactive panel that sits beside an open station dialog and lists the recipes its
+/// sources matched for the station's contents. One per registered station. Also adds show and
+/// auto-open buttons to the station's title bar. Knows nothing about any particular recipe type:
+/// sources hand over <see cref="RecipeMatch"/> data and <see cref="RowBuilder"/> decides how it looks.
 /// </summary>
-public sealed class RecipeWindow : HudElement
+internal sealed class RecipeWindow : HudElement
 {
     private const double GapPx = 6;
     private const int MaxVisibleRows = 6;
@@ -150,25 +151,22 @@ public sealed class RecipeWindow : HudElement
         return sb.ToString();
     }
 
-    private (List<RecipeRow> rows, string note) BuildRows(StationContents contents, List<IRecipeSource> active)
+    private (List<RowView> rows, string note) BuildRows(StationContents contents, List<IRecipeSource> active)
     {
-        var rows = new List<RecipeRow>();
-        string? note = null;
+        var matches = new List<RecipeMatch>();
         foreach (var source in active)
         {
             try
             {
-                rows.AddRange(source.GetRows(contents));
-                note ??= source.EmptyNote(contents);
+                matches.AddRange(source.FindMatches(contents));
             }
             catch (Exception e)
             {
-                capi.Logger.Error("[cookui] {0} failed to build rows: {1}", source.GetType().Name, e);
+                capi.Logger.Error("[cookui] {0} failed to find matches: {1}", source.GetType().Name, e);
             }
         }
-        // Several sources: keep each one's order, but list everything ready first.
-        if (active.Count > 1) rows = rows.OrderBy(r => RecipeFormat.Rank(r.State)).ToList();
-        note ??= Lang.Get(contents.Slots.All(s => s.Empty) ? "cookui:no-recipes" : "cookui:no-recipe-fits");
+        var rows = RowBuilder.Build(matches, contents.Slots.Count);
+        string note = Lang.Get(contents.Slots.All(s => s.Empty) ? "cookui:add-ingredient" : "cookui:no-recipe-fits");
         return (rows, note);
     }
 
@@ -176,10 +174,6 @@ public sealed class RecipeWindow : HudElement
     {
         var (rows, note) = BuildRows(contents, active);
         int slotCount = contents.Slots.Count;
-        foreach (var row in rows)
-        {
-            while (row.Ingredients.Count < slotCount) row.Ingredients.Add(RecipeSlot.Empty());
-        }
 
         double rowsWidth = GuiElementRecipeRows.WidthFor(slotCount);
         double totalHeight = GuiElementRecipeRows.HeightFor(rows.Count);

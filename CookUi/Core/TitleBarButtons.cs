@@ -15,7 +15,7 @@ namespace CookUi;
 /// Several windows can attach to the same dialog (pot vs saucepan in a firepit) as long as
 /// only one of them is visible at a time.
 /// </summary>
-public class TitleBarButtons : GuiElement
+internal class TitleBarButtons : GuiElement
 {
     private const double ButtonSize = 22;
     private const double ButtonGap = 4;

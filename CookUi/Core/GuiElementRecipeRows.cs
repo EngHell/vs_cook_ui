@@ -14,7 +14,7 @@ namespace CookUi;
 /// Hovering any icon shows its (localized) name. Reads the mouse position directly,
 /// so the panel never needs to take mouse events away from the firepit dialog.
 /// </summary>
-public class GuiElementRecipeRows : GuiElement
+internal class GuiElementRecipeRows : GuiElement
 {
     public const double SlotSize = 40;
     public const double SlotGap = 4;
@@ -26,20 +26,20 @@ public class GuiElementRecipeRows : GuiElement
     private static readonly int RequiredColor = ColorUtil.ToRgba(170, 95, 95, 95);
     private static readonly int OptionalColor = ColorUtil.ToRgba(90, 70, 70, 70);
 
-    private readonly List<RecipeRow> rows;
+    private readonly List<RowView> rows;
     private readonly int slotCount;
     private readonly ElementBounds clipBounds;
     private readonly Dictionary<string, LoadedTexture> textCache = new();
     private readonly TooltipRenderer tooltip;
     private readonly Dictionary<ItemStack, ItemSlot> slotCache = new(ReferenceEqualityComparer.Instance);
     private LoadedTexture? slotTex, readyTex, warnTex, sepTex;
-    private RecipeSlot? hover;
+    private SlotView? hover;
     /// <summary>Drives rotating icons; paused while the mouse is over a recipe row.</summary>
     private float cycleClock;
     private int cycleFrame;
 
     /// <param name="clipBounds">Visible (scrolled) area; slots outside it don't react to the mouse.</param>
-    public GuiElementRecipeRows(ICoreClientAPI capi, ElementBounds bounds, ElementBounds clipBounds, List<RecipeRow> rows, int slotCount)
+    public GuiElementRecipeRows(ICoreClientAPI capi, ElementBounds bounds, ElementBounds clipBounds, List<RowView> rows, int slotCount)
         : base(capi, bounds)
     {
         this.rows = rows;
@@ -126,8 +126,8 @@ public class GuiElementRecipeRows : GuiElement
 
             var bg = row.State switch
             {
-                PredictionState.Ready => readyTex,
-                PredictionState.TooMuch or PredictionState.RatioWrong => warnTex,
+                MatchState.Ready => readyTex,
+                MatchState.TooMuch or MatchState.WrongAmounts => warnTex,
                 _ => slotTex,
             };
             double mealX = Bounds.renderX + scaled(SlotX(-1));
@@ -173,7 +173,7 @@ public class GuiElementRecipeRows : GuiElement
         tooltip.Render(hover == null ? null : TooltipLines(hover), api.Input.MouseX, api.Input.MouseY);
     }
 
-    private List<TooltipLine> TooltipLines(RecipeSlot view)
+    private List<TooltipLine> TooltipLines(SlotView view)
     {
         var lines = new List<TooltipLine>();
         if (!string.IsNullOrEmpty(view.Tooltip)) lines.Add(new TooltipLine(view.Tooltip));
@@ -189,7 +189,7 @@ public class GuiElementRecipeRows : GuiElement
     }
 
     /// <summary>The icon to draw this frame: the current step of the rotation, or the fixed slot.</summary>
-    private ItemSlot? CurrentSlot(RecipeSlot view)
+    private ItemSlot? CurrentSlot(SlotView view)
     {
         var stack = view.Cycle is { Count: > 1 } cycle ? cycle[cycleFrame % cycle.Count] : view.Icon;
         if (stack == null) return null;
@@ -205,7 +205,7 @@ public class GuiElementRecipeRows : GuiElement
     }
 
     /// <returns>The slot when the mouse is over it and it has a tooltip.</returns>
-    private RecipeSlot? RenderSlot(RecipeSlot view, double x, double y, double size, int mx, int my)
+    private SlotView? RenderSlot(SlotView view, double x, double y, double size, int mx, int my)
     {
         if (view.Choices is { Count: > 0 } choices)
         {
@@ -239,7 +239,7 @@ public class GuiElementRecipeRows : GuiElement
     }
 
     /// <summary>Up to four small icons in a 2×2 grid; with more choices the last cell says "+N".</summary>
-    private void RenderMosaic(RecipeSlot view, List<RecipeSlot> choices, double x, double y, double size)
+    private void RenderMosaic(SlotView view, List<SlotView> choices, double x, double y, double size)
     {
         int color = view.Kind == SlotKind.Required ? RequiredColor : OptionalColor;
         bool overflow = choices.Count > 4;

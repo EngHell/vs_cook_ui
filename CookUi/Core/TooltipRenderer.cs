@@ -8,13 +8,13 @@ using Vintagestory.API.Client;
 namespace CookUi;
 
 /// <summary>One block of tooltip text; highlighted lines are drawn in gold.</summary>
-public readonly record struct TooltipLine(string Text, bool Highlight = false);
+internal readonly record struct TooltipLine(string Text, bool Highlight = false);
 
 /// <summary>
 /// Small text popup drawn next to the mouse: one box, lines word-wrapped, highlighted ones in gold.
 /// Cached until its text changes.
 /// </summary>
-public sealed class TooltipRenderer : IDisposable
+internal sealed class TooltipRenderer : IDisposable
 {
     private static readonly double[] Gold = { 1.0, 0.8, 0.3, 1.0 };
     private const double Padding = 6;

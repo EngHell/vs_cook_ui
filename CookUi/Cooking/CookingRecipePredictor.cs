@@ -10,7 +10,7 @@ namespace CookUi;
 /// <param name="MissingTotal">Pot slots that still need a required ingredient.</param>
 public record RecipePrediction(
     CookingRecipe Recipe,
-    PredictionState State,
+    MatchState State,
     int Servings,
     int[] Counts,
     int MissingTotal);
@@ -44,7 +44,7 @@ public static class CookingRecipePredictor
         }
 
         return results
-            .OrderBy(p => p.State == PredictionState.Missing ? 1 : 0)
+            .OrderBy(p => p.State == MatchState.Missing ? 1 : 0)
             .ThenBy(p => p.MissingTotal)
             .ThenBy(p => p.Recipe.Code, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -71,7 +71,7 @@ public static class CookingRecipePredictor
 
         if (missingTotal > 0)
         {
-            return new RecipePrediction(recipe, PredictionState.Missing, 0, counts, missingTotal);
+            return new RecipePrediction(recipe, MatchState.Missing, 0, counts, missingTotal);
         }
 
         // Empty pot and a recipe with no required groups: not a useful suggestion.
@@ -82,10 +82,10 @@ public static class CookingRecipePredictor
         {
             // All required groups are satisfied, so a failed match means uneven quantities
             // (vanilla reports quantityServings == -1 for this).
-            return new RecipePrediction(recipe, PredictionState.RatioWrong, 0, counts, 0);
+            return new RecipePrediction(recipe, MatchState.WrongAmounts, 0, counts, 0);
         }
 
-        var state = servings > maxServings ? PredictionState.TooMuch : PredictionState.Ready;
+        var state = servings > maxServings ? MatchState.TooMuch : MatchState.Ready;
         return new RecipePrediction(recipe, state, servings, counts, 0);
     }
 
