@@ -8,45 +8,13 @@ using Vintagestory.API.MathTools;
 
 namespace CookUi;
 
-public enum SlotKind { Empty, Present, Required, Optional }
-
-/// <summary>One square in a recipe row: an item icon, a small amount label and a hover text.</summary>
-public sealed class SlotView
-{
-    public SlotKind Kind;
-    public ItemSlot? Slot;
-    public string? Tooltip;
-    /// <summary>Category names listed after <see cref="Tooltip"/>, matching <see cref="Cycle"/>; the shown one is gold.</summary>
-    public List<string>? Categories;
-    public string? Count;
-    /// <summary>Amount is wrong (uneven stack size); count is drawn in orange.</summary>
-    public bool Warn;
-    /// <summary>
-    /// The slot accepts any of these (one per ingredient kind); drawn as a 2×2 mosaic of small
-    /// icons instead of <see cref="Slot"/>, with "+N" in the last cell when there are more than 4.
-    /// </summary>
-    public List<SlotView>? Choices;
-    /// <summary>
-    /// The group accepts several kinds of item: the icon rotates through these (one per kind)
-    /// instead of always showing <see cref="Slot"/>.
-    /// </summary>
-    public List<ItemSlot>? Cycle;
-}
-
-public sealed class RowView
-{
-    public required SlotView Meal;
-    public required PredictionState State;
-    public required List<SlotView> Ingredients;
-}
-
 /// <summary>
 /// Draws rows of "[meal] | [ing] [ing] [ing] [ing]", mirroring the pot's slots.
 /// Ingredients still needed show as dark "shadow" icons, optional ones fainter still.
 /// Hovering any icon shows its (localized) name. Reads the mouse position directly,
 /// so the panel never needs to take mouse events away from the firepit dialog.
 /// </summary>
-public class GuiElementRecipeRows : GuiElement
+internal class GuiElementRecipeRows : GuiElement
 {
     public const double SlotSize = 40;
     public const double SlotGap = 4;
@@ -63,6 +31,7 @@ public class GuiElementRecipeRows : GuiElement
     private readonly ElementBounds clipBounds;
     private readonly Dictionary<string, LoadedTexture> textCache = new();
     private readonly TooltipRenderer tooltip;
+    private readonly Dictionary<ItemStack, ItemSlot> slotCache = new(ReferenceEqualityComparer.Instance);
     private LoadedTexture? slotTex, readyTex, warnTex, sepTex;
     private SlotView? hover;
     /// <summary>Drives rotating icons; paused while the mouse is over a recipe row.</summary>
@@ -157,8 +126,8 @@ public class GuiElementRecipeRows : GuiElement
 
             var bg = row.State switch
             {
-                PredictionState.Ready => readyTex,
-                PredictionState.TooMuch or PredictionState.RatioWrong => warnTex,
+                MatchState.Ready => readyTex,
+                MatchState.TooMuch or MatchState.WrongAmounts => warnTex,
                 _ => slotTex,
             };
             double mealX = Bounds.renderX + scaled(SlotX(-1));
@@ -167,7 +136,7 @@ public class GuiElementRecipeRows : GuiElement
 
             // Always render every slot; only remember the first tooltip under the mouse.
             // (Don't use `hover ??= RenderSlot(...)`: it skips rendering once hover is set.)
-            var t = RenderSlot(row.Meal, mealX, y, size, mx, my);
+            var t = RenderSlot(row.Result, mealX, y, size, mx, my);
             if (mouseInView) hover ??= t;
             for (int i = 0; i < slotCount; i++)
             {
@@ -220,8 +189,14 @@ public class GuiElementRecipeRows : GuiElement
     }
 
     /// <summary>The icon to draw this frame: the current step of the rotation, or the fixed slot.</summary>
-    private ItemSlot? CurrentSlot(SlotView view) =>
-        view.Cycle is { Count: > 1 } cycle ? cycle[cycleFrame % cycle.Count] : view.Slot;
+    private ItemSlot? CurrentSlot(SlotView view)
+    {
+        var stack = view.Cycle is { Count: > 1 } cycle ? cycle[cycleFrame % cycle.Count] : view.Icon;
+        if (stack == null) return null;
+        // The renderer wants slots; make one per stack once, not every frame.
+        if (!slotCache.TryGetValue(stack, out var slot)) slotCache[stack] = slot = new DummySlot(stack);
+        return slot;
+    }
 
     private void Blit(LoadedTexture? tex, double x, double y)
     {

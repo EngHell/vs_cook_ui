@@ -8,18 +8,18 @@ using Vintagestory.GameContent;
 namespace CookUi;
 
 /// <summary>
-/// Two small buttons drawn on the firepit dialog's title bar, left of its menu icon:
+/// Two small buttons drawn on a station dialog's title bar, left of its menu icon:
 /// a bowl that opens/closes the recipe panel, and an "A" that turns auto-open on or off.
-/// They live in an extra composer added to the firepit dialog, so they move, render and
-/// take clicks together with it (the firepit's own title bar doesn't consume clicks).
+/// They live in an extra composer added to the station dialog, so they move, render and
+/// take clicks together with it (the dialog's own title bar doesn't consume clicks).
+/// Several windows can attach to the same dialog (pot vs saucepan in a firepit) as long as
+/// only one of them is visible at a time.
 /// </summary>
-public class GuiElementFirepitButtons : GuiElement
+internal class TitleBarButtons : GuiElement
 {
-    public const string ComposerKey = "cookui-buttons";
-
     private const double ButtonSize = 22;
     private const double ButtonGap = 4;
-    // Firepit title bar: close (15) + menu (17) icons and ~20px padding from the right edge.
+    // Dialog title bar: close (15) + menu (17) icons and ~20px padding from the right edge.
     private const double TitleBarIconsWidth = 15 + 17 + 20 + 8;
 
     private readonly GuiDialog host;
@@ -34,7 +34,7 @@ public class GuiElementFirepitButtons : GuiElement
     private LoadedTexture? bgOff, bgOn, autoOnTex, autoOffTex;
     private double panelX, autoX, btnY, btnSize;
 
-    public GuiElementFirepitButtons(ICoreClientAPI capi, GuiDialog host, Func<bool> isVisible, Func<bool> isPanelOpen,
+    public TitleBarButtons(ICoreClientAPI capi, GuiDialog host, Func<bool> isVisible, Func<bool> isPanelOpen,
         Func<bool> isAutoOpen, Action togglePanel, Action toggleAuto)
         : base(capi, ElementBounds.Fixed(0, 0, 1, 1))
     {
@@ -50,14 +50,17 @@ public class GuiElementFirepitButtons : GuiElement
         if (bowls is { Length: > 0 }) bowlSlot = new DummySlot(new ItemStack(bowls[0]));
     }
 
-    /// <summary>Adds the buttons to <paramref name="dialog"/> unless they are already there.</summary>
-    public static void AttachTo(ICoreClientAPI capi, GuiDialog dialog, Func<GuiElementFirepitButtons> factory)
+    /// <summary>
+    /// Adds the buttons to <paramref name="dialog"/> under <paramref name="composerKey"/> unless
+    /// they are already there (dialogs that rebuild themselves drop them; they come back next call).
+    /// </summary>
+    public static void AttachTo(ICoreClientAPI capi, GuiDialog dialog, string composerKey, Func<TitleBarButtons> factory)
     {
-        if (dialog.Composers.ContainsKey(ComposerKey)) return;
-        var composer = capi.Gui.CreateCompo(ComposerKey, ElementBounds.Fixed(0, 0, 1, 1))
+        if (dialog.Composers.ContainsKey(composerKey)) return;
+        var composer = capi.Gui.CreateCompo(composerKey, ElementBounds.Fixed(0, 0, 1, 1))
             .AddInteractiveElement(factory(), "buttons")
             .Compose();
-        dialog.Composers[ComposerKey] = composer;
+        dialog.Composers[composerKey] = composer;
     }
 
     public override void ComposeElements(Context ctx, ImageSurface surface)

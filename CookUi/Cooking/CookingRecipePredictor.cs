@@ -6,33 +6,22 @@ using Vintagestory.GameContent;
 
 namespace CookUi;
 
-public enum PredictionState
-{
-    /// <summary>Ingredients match; the pot will cook this.</summary>
-    Ready,
-    /// <summary>Everything required is present but quantities are uneven.</summary>
-    RatioWrong,
-    /// <summary>Matches, but makes more servings than the pot holds.</summary>
-    TooMuch,
-    /// <summary>Current contents fit this recipe; more ingredients are required.</summary>
-    Missing,
-}
-
 /// <param name="Counts">How many pot stacks were assigned to each recipe ingredient group.</param>
 /// <param name="MissingTotal">Pot slots that still need a required ingredient.</param>
 public record RecipePrediction(
     CookingRecipe Recipe,
-    PredictionState State,
+    MatchState State,
     int Servings,
     int[] Counts,
     int MissingTotal);
 
 /// <summary>
-/// Works out which cooking recipes the current pot contents are heading toward.
+/// Works out which cooking recipes (pot, or anything using vanilla <see cref="CookingRecipe"/>s
+/// such as A Culinary Artillery's mixing bowl) the current contents are heading toward.
 /// Ingredient assignment mirrors <see cref="CookingRecipe.Matches(ItemStack[], ref int)"/>
 /// (greedy, first matching ingredient group with room) so predictions agree with vanilla.
 /// </summary>
-public static class RecipePredictor
+public static class CookingRecipePredictor
 {
     public static List<RecipePrediction> Predict(
         IEnumerable<CookingRecipe> recipes,
@@ -55,7 +44,7 @@ public static class RecipePredictor
         }
 
         return results
-            .OrderBy(p => p.State == PredictionState.Missing ? 1 : 0)
+            .OrderBy(p => p.State == MatchState.Missing ? 1 : 0)
             .ThenBy(p => p.MissingTotal)
             .ThenBy(p => p.Recipe.Code, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -82,7 +71,7 @@ public static class RecipePredictor
 
         if (missingTotal > 0)
         {
-            return new RecipePrediction(recipe, PredictionState.Missing, 0, counts, missingTotal);
+            return new RecipePrediction(recipe, MatchState.Missing, 0, counts, missingTotal);
         }
 
         // Empty pot and a recipe with no required groups: not a useful suggestion.
@@ -93,10 +82,10 @@ public static class RecipePredictor
         {
             // All required groups are satisfied, so a failed match means uneven quantities
             // (vanilla reports quantityServings == -1 for this).
-            return new RecipePrediction(recipe, PredictionState.RatioWrong, 0, counts, 0);
+            return new RecipePrediction(recipe, MatchState.WrongAmounts, 0, counts, 0);
         }
 
-        var state = servings > maxServings ? PredictionState.TooMuch : PredictionState.Ready;
+        var state = servings > maxServings ? MatchState.TooMuch : MatchState.Ready;
         return new RecipePrediction(recipe, state, servings, counts, 0);
     }
 

@@ -8,28 +8,13 @@ using Vintagestory.GameContent;
 
 namespace CookUi;
 
-/// <summary>Icon and localized label for one recipe ingredient group.</summary>
-public sealed class IngredientInfo
-{
-    public required ItemStack? Icon;
-    /// <summary>Short name: the item's own name for single-item groups, else the group type ("Vegetables").</summary>
-    public required string Label;
-    /// <summary>
-    /// Kinds of item the group accepts ("Vegetables", "Mushrooms", "Pickled vegetables"...),
-    /// the one holding <see cref="Icon"/> first. Slots rotate through their icons.
-    /// </summary>
-    public required List<IngredientCategory> Categories;
-}
-
-/// <summary>Accepted items sharing a code prefix (vegetable-*, mushroom-*...), with one icon for all of them.</summary>
-public sealed record IngredientCategory(string Name, ItemStack Icon);
-
 /// <summary>
-/// Resolves ingredient groups (including wildcard codes such as "fruit-*") to concrete stacks,
-/// and picks a representative icon: a carrot for vegetables, an apple for fruit, a drumstick for meat...
-/// All names come from the game's own language files, so they follow the selected language.
+/// Data helpers for recipe sources: expands recipe ingredients (wildcards, variant filters, tags)
+/// into the concrete stacks they accept, and works out the satiety they add to a meal.
+/// Results are cached and the same list instance is returned for the same ingredient, which is
+/// what <see cref="IngredientOption.Accepts"/> wants.
 /// </summary>
-public class IngredientIcons
+public class IngredientResolver
 {
     /// <summary>Preferred icons, first match wins. Wildcards allowed.</summary>
     private static readonly string[] Representatives =
@@ -47,42 +32,12 @@ public class IngredientIcons
     };
 
     private readonly IWorldAccessor world;
-    private readonly Dictionary<CookingRecipeIngredient, IngredientInfo> cache = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<CookingRecipeIngredient, List<ItemStack>> stacksCache = new(ReferenceEqualityComparer.Instance);
+    // Keyed by ingredient object (CookingRecipeIngredient or CraftingRecipeIngredient).
+    private readonly Dictionary<object, List<ItemStack>> stacksCache = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<string, List<ItemStack>> wildcardCache = new();
     private readonly Dictionary<CookingRecipeIngredient, (float min, float max)?> satietyCache = new(ReferenceEqualityComparer.Instance);
 
-    public IngredientIcons(IWorldAccessor world) => this.world = world;
-
-    public IngredientInfo Get(CookingRecipeIngredient ing)
-    {
-        if (cache.TryGetValue(ing, out var info)) return info;
-
-        var stacks = Stacks(ing);
-        ItemStack? icon = PickRepresentative(stacks);
-        var categories = Categories(stacks);
-
-        // Rotation order: the representative's category first, showing the representative itself.
-        if (icon != null)
-        {
-            int at = categories.FindIndex(c => CategoryKey(c.Icon) == CategoryKey(icon));
-            if (at >= 0)
-            {
-                var cat = categories[at];
-                categories.RemoveAt(at);
-                categories.Insert(0, cat with { Icon = icon });
-            }
-        }
-
-        string label = stacks.Count == 1
-            ? SafeName(stacks[0])
-            : Capitalize(Lang.GetIfExists("handbook-mealingredient-" + ing.TypeName)
-                         ?? Lang.GetIfExists("foodcategory-" + ing.TypeName)
-                         ?? ing.TypeName);
-
-        info = new IngredientInfo { Icon = icon, Label = label, Categories = categories };
-        cache[ing] = info;
-        return info;
-    }
+    public IngredientResolver(IWorldAccessor world) => this.world = world;
 
     /// <summary>All concrete stacks the group accepts, wildcards expanded.</summary>
     public List<ItemStack> Stacks(CookingRecipeIngredient ing)
@@ -116,31 +71,49 @@ public class IngredientIcons
         return list;
     }
 
-    /// <summary>
-    /// Groups accepted items by the first part of their code (vegetable-carrot and vegetable-onion
-    /// are "vegetable", mushroom-* is "mushroom"), in recipe order. A category with one item is
-    /// named after it; larger ones use cookui:family-&lt;key&gt;, else "first item (+N)".
-    /// </summary>
-    private static List<IngredientCategory> Categories(List<ItemStack> stacks)
+    /// <summary>All concrete stacks a generic recipe ingredient accepts, wildcards expanded (variant filters respected).</summary>
+    public List<ItemStack> Stacks(CraftingRecipeIngredient ing)
     {
-        var result = new List<IngredientCategory>();
-        foreach (var group in stacks.GroupBy(CategoryKey))
-        {
-            var items = group.ToList();
-            var icon = PickRepresentative(items)!;
-            string name = items.Count == 1
-                ? SafeName(icon)
-                : Lang.GetIfExists("cookui:family-" + group.Key) ?? SafeName(icon) + " (+" + (items.Count - 1) + ")";
-            if (name.Length > 0) result.Add(new IngredientCategory(name, icon));
-        }
-        return result;
-    }
+        if (stacksCache.TryGetValue(ing, out var list)) return list;
 
-    private static string CategoryKey(ItemStack stack)
-    {
-        string path = stack.Collectible.Code.Path;
-        int dash = path.IndexOf('-');
-        return dash < 0 ? path : path[..dash];
+        // Mod recipes repeat the same wildcard across hundreds of recipe objects (ACA's 1000+
+        // kneading recipes); share the expensive scan between equal ingredients.
+        // (Tag conditions are left out: those ingredients just get their own scan.)
+        string? valueKey = ing.MatchingType == EnumRecipeMatchType.Exact || !ing.Tags.IsEmpty ? null : string.Join("|",
+            ing.Type, ing.MatchingType, ing.Code,
+            ing.AllowedVariants == null ? "" : string.Join(",", ing.AllowedVariants),
+            ing.SkipVariants == null ? "" : string.Join(",", ing.SkipVariants));
+        if (valueKey != null && wildcardCache.TryGetValue(valueKey, out list))
+        {
+            stacksCache[ing] = list;
+            return list;
+        }
+        list = new List<ItemStack>();
+
+        if (ing.MatchingType != EnumRecipeMatchType.Exact)
+        {
+            // Wildcards, regexes, tags...: let the ingredient judge every collectible.
+            var seen = new HashSet<AssetLocation>();
+            foreach (var c in world.Collectibles)
+            {
+                if (c?.Code == null) continue;
+                var stack = new ItemStack(c);
+                bool ok;
+                try { ok = ing.SatisfiesAsIngredient(stack, false); }
+                catch (Exception) { ok = false; }
+                if (ok && seen.Add(c.Code)) list.Add(stack);
+            }
+        }
+        else if (ing.ResolvedItemStack is { } rs)
+        {
+            var s = rs.Clone();
+            s.StackSize = 1;
+            list.Add(s);
+        }
+
+        stacksCache[ing] = list;
+        if (valueKey != null) wildcardCache[valueKey] = list;
+        return list;
     }
 
     /// <summary>
@@ -151,7 +124,7 @@ public class IngredientIcons
     {
         if (satietyCache.TryGetValue(ing, out var range)) return range;
         var values = Stacks(ing)
-            .Select(s => MealNutrition(world, s, ing, entity)?.Satiety)
+            .Select(s => NutritionOf(world, s, ing, entity)?.Satiety)
             .Where(v => v != null).Select(v => v!.Value).ToList();
         range = values.Count == 0 ? null : (values.Min(), values.Max());
         satietyCache[ing] = range;
@@ -162,7 +135,7 @@ public class IngredientIcons
     /// What one serving's worth of <paramref name="stack"/> adds to a meal. Mirrors
     /// BlockMeal.GetContentNutritionProperties (without spoilage) so numbers match the game's tooltip.
     /// </summary>
-    public static FoodNutritionProperties? MealNutrition(IWorldAccessor world, ItemStack stack, CookingRecipeIngredient? ing, EntityAgent? entity)
+    public static FoodNutritionProperties? NutritionOf(IWorldAccessor world, ItemStack stack, CookingRecipeIngredient? ing, EntityAgent? entity)
     {
         try
         {
@@ -201,7 +174,8 @@ public class IngredientIcons
         }
     }
 
-    private static ItemStack? PickRepresentative(List<ItemStack> stacks)
+    /// <summary>A typical item of the group for icons: a carrot for vegetables, an apple for fruit...</summary>
+    public static ItemStack? Representative(List<ItemStack> stacks)
     {
         if (stacks.Count == 0) return null;
         if (stacks.Count == 1) return stacks[0];
