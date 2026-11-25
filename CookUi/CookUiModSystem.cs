@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using CookUi.Compat.AculinaryArtillery;
+using CookUi.Compat.ElectricalProgressive;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 
@@ -58,9 +59,17 @@ public class CookUiModSystem : ModSystem
         RegisterStation(new FirepitStation());
         RegisterRecipeSource(FirepitStationId, CookingRecipeSource.Vanilla(api));
 
+        var estove = api.ModLoader.IsModEnabled(EStoveStation.ModId);
+        if (estove)
+        {
+            RegisterStation(new EStoveStation());
+            RegisterRecipeSource(EStoveStation.StationId, CookingRecipeSource.Vanilla(api));
+        }
+
         if (api.ModLoader.IsModEnabled(Aca.ModId))
         {
             RegisterRecipeSource(FirepitStationId, new SimmerRecipeSource(api));
+            if (estove) RegisterRecipeSource(EStoveStation.StationId, new SimmerRecipeSource(api));
             RegisterStation(new MixingBowlStation());
             // The bowl doesn't care whether the pot is dirty (BlockEntityMixingBowl.GetMatchingMixingRecipe).
             RegisterRecipeSource(MixingBowlStation.StationId,
