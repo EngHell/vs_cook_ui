@@ -7,7 +7,7 @@
         "EngHell"
     ],
     "description": "Shows which cooking pot recipes your current ingredients can make, and what is still missing.",
-    "version": "0.0.5",
+    "version": "0.0.6",
     "dependencies": {
         "game": "1.22.0"
     },
