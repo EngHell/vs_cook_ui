@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using CookUi.Compat.AculinaryArtillery;
 using CookUi.Compat.ElectricalProgressive;
+using CookUi.Oven;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 
@@ -23,6 +24,7 @@ public class CookUiModSystem : ModSystem
     private readonly List<ICookingStation> stations = new();
     private readonly Dictionary<string, List<IRecipeSource>> sources = new();
     private readonly Dictionary<string, RecipeWindow> windows = new();
+    private OvenHud? ovenHud;
     private long tickListenerId;
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Client;
@@ -77,6 +79,8 @@ public class CookUiModSystem : ModSystem
             RegisterRecipeSource(MixingBowlStation.StationId, new KneadingRecipeSource(api));
         }
 
+        ovenHud = new OvenHud(api, config);
+
         // Cheap poll: finds open station dialogs and refreshes only when contents change.
         tickListenerId = api.Event.RegisterGameTickListener(_ => Tick(), 100);
     }
@@ -101,6 +105,14 @@ public class CookUiModSystem : ModSystem
                 capi.Logger.Error("[cookui] Station '{0}' failed to update: {1}", station.Id, e);
             }
         }
+        try
+        {
+            ovenHud?.Update();
+        }
+        catch (Exception e)
+        {
+            capi.Logger.Error("[cookui] Oven panel failed to update: {0}", e);
+        }
     }
 
     public override void Dispose()
@@ -112,5 +124,8 @@ public class CookUiModSystem : ModSystem
             w.Dispose();
         }
         windows.Clear();
+        ovenHud?.TryClose();
+        ovenHud?.Dispose();
+        ovenHud = null;
     }
 }

@@ -11,6 +11,9 @@ public class CookUiConfig
     /// <summary>Open the recipe panel automatically whenever a firepit with a pot is opened.</summary>
     public bool AutoOpen { get; set; } = true;
 
+    /// <summary>Show the clay oven panel while looking at an oven.</summary>
+    public bool ShowOvenPanel { get; set; } = true;
+
     public static CookUiConfig Load(ICoreClientAPI capi)
     {
         try

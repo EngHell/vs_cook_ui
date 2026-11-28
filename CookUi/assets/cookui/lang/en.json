@@ -47,5 +47,12 @@
     "family-poultry": "Poultry",
     "family-fish": "Fish",
     "family-egg": "Eggs",
-    "family-spice": "Spices"
+    "family-spice": "Spices",
+
+    "oven-fuel-burning": "Burning, {0}s left",
+    "oven-fuel-unlit": "Light it to heat the oven",
+    "oven-item-temp": "{0}°C",
+    "oven-heating": "Heating: {0}°C, bakes at {1}°C",
+    "oven-baking": "Baking {0}% · {1}°C",
+    "oven-burning": "Will burn: {0}% · {1}°C"
 }

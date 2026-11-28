@@ -47,5 +47,12 @@
     "family-poultry": "Aves",
     "family-fish": "Pescado",
     "family-egg": "Huevos",
-    "family-spice": "Especias"
+    "family-spice": "Especias",
+
+    "oven-fuel-burning": "Ardiendo, quedan {0}s",
+    "oven-fuel-unlit": "Enciéndela para calentar el horno",
+    "oven-item-temp": "{0}°C",
+    "oven-heating": "Calentando: {0}°C, hornea a {1}°C",
+    "oven-baking": "Horneando {0}% · {1}°C",
+    "oven-burning": "Se quemará: {0}% · {1}°C"
 }
